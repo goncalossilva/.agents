@@ -16,9 +16,9 @@ const b = await Promise.race([
     browserURL: "http://localhost:9222",
     defaultViewport: null,
   }),
-  new Promise((_, reject) =>
-    setTimeout(() => reject(new Error("timeout")), 5000),
-  ),
+  new Promise((_, reject) => {
+    setTimeout(() => reject(new Error("timeout")), 5000).unref();
+  }),
 ]).catch((e) => {
   console.error("✗ Could not connect to browser:", e.message);
   console.error("  Run: browser-start.js");
