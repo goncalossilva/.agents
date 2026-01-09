@@ -51,6 +51,12 @@ Navigate to URLs. Use `--new` flag to open in a new tab instead of reusing curre
 
 Execute JavaScript in the active tab. Code runs in async context. Use this to extract data, inspect page state, or perform DOM operations programmatically.
 
+For multi-line code or statements, wrap in an IIFE:
+
+```bash
+"$HOME/.agents/skills/browser-tools/browser-eval.js" '(() => { const x = 1; return x + 1; })()'
+```
+
 ## Screenshot
 
 ```bash
