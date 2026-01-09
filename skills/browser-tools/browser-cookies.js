@@ -34,7 +34,7 @@ if (format === "netscape") {
   for (const cookie of cookies) {
     const includeSubdomains = cookie.domain.startsWith(".") ? "TRUE" : "FALSE";
     const secure = cookie.secure ? "TRUE" : "FALSE";
-    const expiry = cookie.expires ? Math.floor(cookie.expires) : "0";
+    const expiry = cookie.expires > 0 ? Math.floor(cookie.expires) : "0";
     console.log(`${cookie.domain}\t${includeSubdomains}\t${cookie.path}\t${secure}\t${expiry}\t${cookie.name}\t${cookie.value}`);
   }
 } else {
