@@ -405,6 +405,9 @@ function printTopHelp() {
 	);
 	console.log("  find-references          Find entity_id/string references");
 	console.log(
+		"  traces                   List/view automation or script traces",
+	);
+	console.log(
 		"  tail-events              Tail Home Assistant events over WebSocket",
 	);
 	console.log(
@@ -441,6 +444,8 @@ async function run() {
 				return await cmdRollback(args);
 			case "find-references":
 				return await cmdFindReferences(args);
+			case "traces":
+				return await cmdTraces(args);
 			case "tail-events":
 				return await cmdTailEvents(args);
 			case "name-review-from-backup":
@@ -2298,6 +2303,235 @@ function* iterDeviceIdsFromEvent(event) {
 	const data = event?.data;
 	if (!data || typeof data !== "object") return;
 	if (typeof data.device_id === "string") yield data.device_id;
+}
+
+// -------------------------
+// traces
+// -------------------------
+
+function printTracesHelp() {
+	console.log("Usage: node scripts/ha_ops.js traces [options]");
+	console.log("");
+	console.log("List or view automation/script execution traces.");
+	console.log("");
+	console.log("Options:");
+	console.log(
+		"  --domain <domain>        Domain to query: automation or script (default: automation)",
+	);
+	console.log(
+		"  --item-id <id>           Filter by numeric automation/script ID (from attributes.id)",
+	);
+	console.log(
+		"  --entity-id <entity_id>  Filter by entity_id (e.g., automation.my_automation)",
+	);
+	console.log(
+		"  --run-id <run_id>        Get detailed trace for a specific run",
+	);
+	console.log("  --limit <n>              Max traces to show (default: 10)");
+	console.log("  --json                   Output as JSON");
+	console.log("  -h, --help               Show this help");
+	console.log("");
+	console.log("Examples:");
+	console.log("  # List recent automation traces");
+	console.log("  node scripts/ha_ops.js traces");
+	console.log("");
+	console.log("  # List traces for a specific automation by entity_id");
+	console.log(
+		"  node scripts/ha_ops.js traces --entity-id automation.doorbell_announce",
+	);
+	console.log("");
+	console.log("  # Get detailed trace for a specific run");
+	console.log(
+		"  node scripts/ha_ops.js traces --item-id 1757182154251 --run-id abc123...",
+	);
+}
+
+async function cmdTraces(argv) {
+	const { values } = parseArgs({
+		args: argv,
+		allowPositionals: false,
+		options: {
+			help: { type: "boolean", short: "h" },
+			domain: { type: "string", default: "automation" },
+			"item-id": { type: "string", default: "" },
+			"entity-id": { type: "string", default: "" },
+			"run-id": { type: "string", default: "" },
+			limit: { type: "string", default: "10" },
+			json: { type: "boolean", default: false },
+		},
+	});
+
+	if (values.help) {
+		printTracesHelp();
+		return 0;
+	}
+
+	const domain = values.domain;
+	if (domain !== "automation" && domain !== "script") {
+		die(`Invalid --domain: ${domain}. Must be 'automation' or 'script'.`, 2);
+	}
+
+	const limit = Number(values.limit);
+	if (!Number.isFinite(limit) || limit < 1) {
+		die(`Invalid --limit: ${values.limit}`, 2);
+	}
+
+	let itemId = values["item-id"];
+	const entityId = values["entity-id"];
+	const runId = values["run-id"];
+
+	// If entity-id is provided, resolve to item-id
+	if (entityId && !itemId) {
+		const rest = new HARest();
+		const state = await rest.getJson(`/api/states/${entityId}`, {
+			expectedStatuses: [200, 404],
+		});
+		if (!state) {
+			die(`Entity not found: ${entityId}`, 2);
+		}
+		const attrs = state.attributes || {};
+		const resolvedId = attrs.id;
+		if (!resolvedId) {
+			die(
+				`Entity ${entityId} does not have an 'id' attribute (required for trace lookup)`,
+				2,
+			);
+		}
+		itemId = String(resolvedId);
+	}
+
+	const ws = await new HAWebSocket().connect();
+	try {
+		if (runId) {
+			// Get specific trace
+			if (!itemId) {
+				die("--item-id (or --entity-id) is required when using --run-id", 2);
+			}
+			const trace = await ws.call("trace/get", {
+				domain,
+				item_id: itemId,
+				run_id: runId,
+			});
+
+			if (values.json) {
+				console.log(JSON.stringify(trace, null, 2));
+			} else {
+				printTraceDetail(trace, domain, itemId, runId);
+			}
+		} else {
+			// List traces
+			const payload = { domain };
+			if (itemId) {
+				payload.item_id = itemId;
+			}
+			const traces = await ws.call("trace/list", payload);
+
+			if (!Array.isArray(traces)) {
+				die(`Unexpected response from trace/list: ${JSON.stringify(traces)}`, 1);
+			}
+
+			// Sort by start time descending
+			traces.sort((a, b) => {
+				const ta = a.timestamp?.start || "";
+				const tb = b.timestamp?.start || "";
+				return tb.localeCompare(ta);
+			});
+
+			const limited = traces.slice(0, limit);
+
+			if (values.json) {
+				console.log(JSON.stringify(limited, null, 2));
+			} else {
+				if (limited.length === 0) {
+					console.log(`No traces found for ${domain}${itemId ? ` (item_id=${itemId})` : ""}`);
+				} else {
+					console.log(
+						`Found ${traces.length} trace(s) for ${domain}${itemId ? ` (item_id=${itemId})` : ""}, showing ${limited.length}:\n`,
+					);
+					for (const t of limited) {
+						printTraceSummary(t);
+					}
+				}
+			}
+		}
+	} finally {
+		await ws.close();
+	}
+
+	return 0;
+}
+
+function printTraceSummary(trace) {
+	const runId = trace.run_id || "?";
+	const state = trace.state || "?";
+	const scriptExec = trace.script_execution || "?";
+	const lastStep = trace.last_step || "?";
+	const start = trace.timestamp?.start || "?";
+	const finish = trace.timestamp?.finish || "";
+	const trigger = trace.trigger || "";
+	const error = trace.error || "";
+
+	console.log(`Run: ${runId}`);
+	console.log(`  State: ${state} | Execution: ${scriptExec}`);
+	console.log(`  Last step: ${lastStep}`);
+	console.log(`  Start: ${start}${finish ? ` | Finish: ${finish}` : ""}`);
+	if (trigger) console.log(`  Trigger: ${trigger}`);
+	if (error) console.log(`  ERROR: ${error}`);
+	console.log();
+}
+
+function printTraceDetail(traceData, domain, itemId, runId) {
+	console.log(`=== Trace Detail ===`);
+	console.log(`Domain: ${domain}`);
+	console.log(`Item ID: ${itemId}`);
+	console.log(`Run ID: ${runId}`);
+	console.log();
+
+	const trace = traceData.trace || {};
+	const paths = Object.keys(trace).sort();
+
+	// Extract timestamps for timeline
+	const timeline = [];
+	for (const path of paths) {
+		const steps = trace[path];
+		if (!Array.isArray(steps)) continue;
+		for (const step of steps) {
+			const ts = step.timestamp;
+			if (ts) {
+				timeline.push({ path, timestamp: ts, step });
+			}
+		}
+	}
+
+	// Sort by timestamp
+	timeline.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+
+	if (timeline.length === 0) {
+		console.log("No trace steps found.");
+		return;
+	}
+
+	const startTime = new Date(timeline[0].timestamp);
+	console.log("Timeline:");
+	for (const { path, timestamp, step } of timeline) {
+		const elapsed = ((new Date(timestamp) - startTime) / 1000).toFixed(3);
+		let info = "";
+
+		const result = step.result || {};
+		if (result.stop) {
+			info = ` -> STOP: ${result.stop}`;
+		} else if (result.error) {
+			info = ` -> ERROR`;
+		}
+
+		const changedVars = step.changed_variables || {};
+		const varNames = Object.keys(changedVars);
+		if (varNames.length > 0 && !info) {
+			info = ` -> vars: ${varNames.join(", ")}`;
+		}
+
+		console.log(`  +${elapsed.padStart(7)}s: ${path}${info}`);
+	}
 }
 
 async function cmdTailEvents(argv) {
