@@ -15,13 +15,13 @@ Codex and Claude load skills from their own folders:
 - Codex: `~/.codex/skills/`
 - Claude: `~/.claude/skills/`
 
-### Copied, not symlinked
+### Symlinked
 
-Codex currently ignores symlinked skill directories, so skills are **copied** from `~/.agents/skills/` into both agent folders using:
+Skills are **symlinked** from `~/.agents/skills/` into both agent folders using:
 
 - `~/.agents/bin/sync-agent-skills`
 
-The shared `AGENTS.md` is also synced:
+The shared `AGENTS.md` is also symlinked:
 
 - Codex: `~/.codex/AGENTS.md`
 - Claude: `~/.claude/CLAUDE.md`
@@ -31,5 +31,3 @@ Typical sync:
 ```bash
 ~/.agents/bin/sync-agent-skills --prune
 ```
-
-When [Codex supports symlinked skills](https://github.com/openai/codex/issues/8369), I'll switch to using symlinks (see the comment in `~/.agents/bin/sync-agent-skills`).

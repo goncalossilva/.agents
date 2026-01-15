@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script used to symlink `~/.agents/skills/<name>` into both
-# `~/.codex/skills/<name>` and `~/.claude/skills/<name>` (cleaner + no copies).
+# Symlink ~/.agents/skills and ~/.agents/AGENTS.md into Codex + Claude.
 #
-# Codex currently ignores symlinked skill directories, so we switched to rsync
-# copies until symlinks are supported: https://github.com/openai/codex/issues/8369
-#
-# Old approach (for later):
-#   ln -sfn "$AGENTS_SKILLS_DIR/$skill_name" "$CODEX_SKILLS_DIR/$skill_name"
-#   ln -sfn "$AGENTS_SKILLS_DIR/$skill_name" "$CLAUDE_SKILLS_DIR/$skill_name"
+# ~/.agents is the source of truth; targets are replaced with symlinks when needed.
 
 AGENTS_SKILLS_DIR="${HOME}/.agents/skills"
 AGENTS_INSTRUCTIONS_FILE="${HOME}/.agents/AGENTS.md"
@@ -24,7 +18,7 @@ PRUNE=0
 
 usage() {
   cat <<'EOF'
-Sync ~/.agents/skills and ~/.agents/AGENTS.md into Codex + Claude (copies, not symlinks).
+	Symlink ~/.agents/skills and ~/.agents/AGENTS.md into Codex + Claude.
 
 Usage:
   sync-agent-skills [--dry-run] [--yes] [--prune]
@@ -35,9 +29,8 @@ Options:
   --prune     Remove skills from agent folders that are not present in ~/.agents/skills
 
 Notes:
-  - Codex ignores symlinked skill directories, so this uses rsync copies.
   - ~/.codex/skills/.system is never touched.
-  - ~/.agents/AGENTS.md is synced to ~/.codex/AGENTS.md and ~/.claude/CLAUDE.md.
+  - ~/.agents/AGENTS.md is symlinked to ~/.codex/AGENTS.md and ~/.claude/CLAUDE.md.
 EOF
 }
 
@@ -67,11 +60,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v rsync >/dev/null 2>&1; then
-  echo "error: rsync is required" >&2
-  exit 1
-fi
-
 mkdir -p "${AGENTS_SKILLS_DIR}" "${CODEX_SKILLS_DIR}" "${CLAUDE_SKILLS_DIR}"
 
 skills=()
@@ -84,23 +72,23 @@ done
 
 declare -a plan=()
 
-plan_rsync() {
-  local src_dir="$1"
-  local dest_dir="$2"
-  plan+=("mkdir:${dest_dir}")
-  plan+=("rsync:${src_dir}:${dest_dir}")
-}
-
-plan_rsync_file() {
-  local src_file="$1"
-  local dest_file="$2"
-  plan+=("mkdir:$(dirname "${dest_file}")")
-  plan+=("rsync_file:${src_file}:${dest_file}")
+plan_symlink() {
+  local src="$1"
+  local dest="$2"
+  plan+=("symlink:${src}:${dest}")
 }
 
 plan_remove() {
   local path="$1"
-  plan+=("rmrf:${path}")
+  case "${path}" in
+    "${CODEX_SKILLS_DIR}"/* | "${CLAUDE_SKILLS_DIR}"/* | "${CODEX_INSTRUCTIONS_FILE}" | "${CLAUDE_INSTRUCTIONS_FILE}")
+      plan+=("rmrf:${path}")
+      ;;
+    *)
+      echo "error: refusing to remove unexpected path: ${path}" >&2
+      exit 1
+      ;;
+  esac
 }
 
 for skill_name in "${skills[@]}"; do
@@ -109,13 +97,18 @@ for skill_name in "${skills[@]}"; do
     target="${target_root}/${skill_name}"
 
     if [[ -L "${target}" ]]; then
+      existing_target="$(readlink "${target}")"
+      if [[ "${existing_target}" == "${skill_dir}" ]]; then
+        continue
+      fi
       plan_remove "${target}"
-      plan_rsync "${skill_dir}" "${target}"
+      plan_symlink "${skill_dir}" "${target}"
       continue
     fi
 
     if [[ -d "${target}" ]]; then
-      plan_rsync "${skill_dir}" "${target}"
+      plan_remove "${target}"
+      plan_symlink "${skill_dir}" "${target}"
       continue
     fi
 
@@ -124,20 +117,25 @@ for skill_name in "${skills[@]}"; do
       continue
     fi
 
-    plan_rsync "${skill_dir}" "${target}"
+    plan_symlink "${skill_dir}" "${target}"
   done
 done
 
 if [[ -f "${AGENTS_INSTRUCTIONS_FILE}" ]]; then
   for target in "${CODEX_INSTRUCTIONS_FILE}" "${CLAUDE_INSTRUCTIONS_FILE}"; do
     if [[ -L "${target}" ]]; then
+      existing_target="$(readlink "${target}")"
+      if [[ "${existing_target}" == "${AGENTS_INSTRUCTIONS_FILE}" ]]; then
+        continue
+      fi
       plan_remove "${target}"
-      plan_rsync_file "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
+      plan_symlink "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
       continue
     fi
 
     if [[ -f "${target}" ]]; then
-      plan_rsync_file "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
+      plan_remove "${target}"
+      plan_symlink "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
       continue
     fi
 
@@ -146,7 +144,7 @@ if [[ -f "${AGENTS_INSTRUCTIONS_FILE}" ]]; then
       continue
     fi
 
-    plan_rsync_file "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
+    plan_symlink "${AGENTS_INSTRUCTIONS_FILE}" "${target}"
   done
 else
   echo "warn: ${AGENTS_INSTRUCTIONS_FILE} not found; skipping instruction sync" >&2
@@ -175,22 +173,19 @@ if [[ "${PRUNE}" -eq 1 ]]; then
 fi
 
 echo "Planned changes:"
+if [[ ${#plan[@]} -eq 0 ]]; then
+  echo "  (no changes needed)"
+  exit 0
+fi
+
 for op in "${plan[@]}"; do
   kind="${op%%:*}"
   rest="${op#*:}"
   case "${kind}" in
-    mkdir)
-      echo "  - ensure dir: ${rest}"
-      ;;
-    rsync)
+    symlink)
       src="${rest%%:*}"
       dest="${rest#*:}"
-      echo "  - sync: ${src} -> ${dest} (rsync --delete)"
-      ;;
-    rsync_file)
-      src="${rest%%:*}"
-      dest="${rest#*:}"
-      echo "  - sync file: ${src} -> ${dest}"
+      echo "  - symlink: ${dest} -> ${src}"
       ;;
     rmrf)
       echo "  - remove: ${rest}"
@@ -220,23 +215,14 @@ for op in "${plan[@]}"; do
   kind="${op%%:*}"
   rest="${op#*:}"
   case "${kind}" in
-    mkdir)
-      mkdir -p "${rest}"
-      ;;
     rmrf)
       rm -rf "${rest}"
       ;;
-    rsync)
-      src="${rest%%:*}"
-      dest="${rest#*:}"
-      mkdir -p "${dest}"
-      rsync -a --delete "${src}/" "${dest}/"
-      ;;
-    rsync_file)
+    symlink)
       src="${rest%%:*}"
       dest="${rest#*:}"
       mkdir -p "$(dirname "${dest}")"
-      rsync -a "${src}" "${dest}"
+      ln -sfn "${src}" "${dest}"
       ;;
   esac
   applied=$((applied + 1))
