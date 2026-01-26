@@ -8,6 +8,7 @@
  *   - snapshot
  *   - rollback
  *   - find-references
+ *   - traces
  *   - tail-events
  *   - name-review-from-backup
  *
