@@ -813,20 +813,20 @@ function parseFilesystemPromptSelection(
   return "deny";
 }
 
-function formatFilesystemAllowRetryMessage(_target: string): string {
-  return "\nSandbox blocked access.\n\nGranting access and retrying the command per user request...\n\n";
+function formatFilesystemAllowRetryMessage(target: string): string {
+  return `\nSandbox blocked ${target}.\n\nGranting access and retrying the command per user request...\n\n`;
 }
 
-function formatFilesystemAllowAdaptMessage(_target: string): string {
-  return "\nSandbox blocked access.\n\nAccess granted for this session. Retry the command manually if appropriate.";
+function formatFilesystemAllowAdaptMessage(target: string): string {
+  return `\nSandbox blocked ${target}.\n\nAccess granted for this session. Retry the command manually if appropriate.`;
 }
 
-function formatFilesystemDeniedMessage(_target: string): string {
-  return "\nSandbox blocked access.\n\nAccess remains denied for this session.";
+function formatFilesystemDeniedMessage(target: string): string {
+  return `\nSandbox blocked ${target}.\n\nAccess remains denied for this session.`;
 }
 
-function formatFilesystemAlreadyAllowedMessage(_target: string): string {
-  return "\nSandbox blocked access again after permission had already been granted. The remaining failure may be unrelated to sandbox policy.";
+function formatFilesystemAlreadyAllowedMessage(target: string): string {
+  return `\nSandbox blocked ${target} again after permission had already been granted. The remaining failure may be unrelated to sandbox policy.`;
 }
 
 function formatFilesystemRetrySucceededMessage(_target: string): string {
