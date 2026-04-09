@@ -67,7 +67,9 @@
       "~/.docker",
       "~/.npm",
       "~/.pi/agent/*.lock",
+      "~/.codex",
       "~/.codex*",
+      "~/.claude",
       "~/.claude*"
     ]
   },
