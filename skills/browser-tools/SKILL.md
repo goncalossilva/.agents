@@ -55,6 +55,10 @@ printf 'return document.title\n' | "$HOME/.agents/skills/browser-tools/browser-e
 
 Execute JavaScript in the active tab. Code runs in async context. Expressions and statement bodies are both supported. Use `return` when passing statements or multi-line code.
 
+### Shell Pitfalls
+
+Prefer `browser-eval.js --file` or `--stdin` over raw `node` heredocs. If you do use a single-quoted heredoc (`<<'EOF'`), write `!` directly — never `\!`. The backslash is passed through literally.
+
 ## Screenshot
 
 ```bash
