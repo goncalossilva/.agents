@@ -168,6 +168,20 @@ interface LoadedSandboxConfig {
   paths: SandboxConfigPath[];
 }
 
+type SandboxConfigLoadErrorKind = "not-found" | "read-failed" | "parse-error";
+
+class SandboxConfigLoadError extends Error {
+  readonly kind: SandboxConfigLoadErrorKind;
+  readonly path: string;
+
+  constructor(kind: SandboxConfigLoadErrorKind, path: string, detail?: string) {
+    super(formatSandboxConfigLoadErrorMessage(kind, path, detail));
+    this.name = "SandboxConfigLoadError";
+    this.kind = kind;
+    this.path = path;
+  }
+}
+
 interface FilesystemViolation {
   kind: FilesystemViolationKind;
   path?: string;
@@ -292,9 +306,25 @@ function getStringFlag(pi: ExtensionAPI, name: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function resolveSandboxConfigPath(cwd: string, configPath: string): string {
-  const expanded = configPath.startsWith("~/") ? join(homedir(), configPath.slice(2)) : configPath;
-  return resolve(cwd, expanded);
+function expandPath(value: string, cwd?: string): string {
+  const expanded = value === "~" ? homedir() : value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
+  return cwd && !expanded.startsWith("/") ? resolve(cwd, expanded) : expanded;
+}
+
+function formatSandboxConfigLoadErrorMessage(
+  kind: SandboxConfigLoadErrorKind,
+  path: string,
+  detail?: string,
+): string {
+  if (kind === "not-found") {
+    return `Sandbox override config not found: ${path}`;
+  }
+
+  if (kind === "parse-error") {
+    return `Could not parse sandbox override config ${path}: ${detail ?? "invalid JSON"}`;
+  }
+
+  return `Could not read sandbox override config ${path}: ${detail ?? "unknown error"}`;
 }
 
 function coerceStringArray(value: unknown, fallback: string[], field: string): string[] {
@@ -356,22 +386,36 @@ function finalizeConfig(config: SandboxConfig): SandboxConfig {
 }
 
 function loadOverrideConfig(cwd: string, overrideConfigPath: string): LoadedSandboxConfig {
-  const resolvedPath = resolveSandboxConfigPath(cwd, overrideConfigPath);
+  const resolvedPath = expandPath(overrideConfigPath, cwd);
 
-  if (!existsSync(resolvedPath)) {
-    console.error(`Specified sandbox override config not found: ${resolvedPath}`);
-    // Pi logs and swallows session_start errors, so startup must terminate explicitly here.
-    process.exit(1);
+  let source: string;
+  try {
+    source = readFileSync(resolvedPath, "utf-8");
+  } catch (error) {
+    const code =
+      error instanceof Error && "code" in error && typeof error.code === "string"
+        ? error.code
+        : undefined;
+    if (code === "ENOENT") {
+      throw new SandboxConfigLoadError("not-found", resolvedPath);
+    }
+
+    throw new SandboxConfigLoadError(
+      "read-failed",
+      resolvedPath,
+      error instanceof Error ? error.message : `${error}`,
+    );
   }
 
   let overrideConfig: Partial<SandboxConfig>;
   try {
-    overrideConfig = JSON.parse(readFileSync(resolvedPath, "utf-8"));
+    overrideConfig = JSON.parse(source);
   } catch (error) {
-    const message = error instanceof Error ? error.message : `${error}`;
-    console.error(`Could not parse sandbox override config ${resolvedPath}: ${message}`);
-    // Pi logs and swallows session_start errors, so startup must terminate explicitly here.
-    process.exit(1);
+    throw new SandboxConfigLoadError(
+      "parse-error",
+      resolvedPath,
+      error instanceof Error ? error.message : `${error}`,
+    );
   }
 
   return {
@@ -471,9 +515,7 @@ function cloneRuntimeConfig(config: SandboxRuntimeConfig): SandboxRuntimeConfig 
 }
 
 function normalizeSandboxPath(value: string, cwd?: string): string {
-  const expanded = value.startsWith("~/") ? join(homedir(), value.slice(2)) : value;
-  const absolute = cwd && !expanded.startsWith("/") ? resolve(cwd, expanded) : expanded;
-  return normalizePathForSandbox(absolute);
+  return normalizePathForSandbox(expandPath(value, cwd));
 }
 
 function matchesSandboxRule(path: string, rule: string, cwd?: string): boolean {
@@ -1642,6 +1684,25 @@ function notifySandboxConfigParseErrors(ctx: ExtensionContext, paths: SandboxCon
   notify(ctx, `Could not parse sandbox config: ${details}`, "warning");
 }
 
+function loadSandboxConfigForContext(
+  ctx: ExtensionContext,
+  cwd: string,
+  overrideConfigPath: string | undefined,
+  options: { exitOnError?: boolean } = {},
+): LoadedSandboxConfig | null {
+  const { exitOnError = false } = options;
+
+  try {
+    return loadConfig(cwd, overrideConfigPath);
+  } catch (error) {
+    if (!(error instanceof SandboxConfigLoadError)) throw error;
+
+    notify(ctx, error.message, "error");
+    if (exitOnError) process.exit(1);
+    return null;
+  }
+}
+
 function getSandboxDependencyErrors(config: SandboxConfig): string[] {
   return SandboxManager.checkDependencies(config.ripgrep).errors;
 }
@@ -1912,22 +1973,25 @@ export default function (pi: ExtensionAPI) {
     resetRuntimeState();
     rebuildBashTools(ctx.cwd);
 
+    const noSandbox = pi.getFlag("no-sandbox") as boolean;
+    if (noSandbox) {
+      sandboxState = { status: "bypassed", reason: "no-sandbox-flag" };
+      notify(ctx, "Sandbox disabled via --no-sandbox", "warning");
+      return;
+    }
+
     const sandboxConfigOverride = getStringFlag(pi, "sandbox-config");
-    const loadedConfig = loadConfig(ctx.cwd, sandboxConfigOverride);
+    const loadedConfig = loadSandboxConfigForContext(ctx, ctx.cwd, sandboxConfigOverride, {
+      exitOnError: true,
+    });
+    if (!loadedConfig) return;
+
     sandboxConfigPaths = loadedConfig.paths;
     const parseErrors = getSandboxConfigParseErrors(sandboxConfigPaths);
     if (parseErrors.length > 0) {
       notifySandboxConfigParseErrors(ctx, parseErrors);
     }
     const config = loadedConfig.config;
-
-    const noSandbox = pi.getFlag("no-sandbox") as boolean;
-
-    if (noSandbox) {
-      sandboxState = { status: "bypassed", reason: "no-sandbox-flag" };
-      notify(ctx, "Sandbox disabled via --no-sandbox", "warning");
-      return;
-    }
 
     if (!config.enabled) {
       sandboxState = { status: "bypassed", reason: "config-disabled" };
@@ -2027,13 +2091,9 @@ export default function (pi: ExtensionAPI) {
           }
 
           const sandboxConfigOverride = getStringFlag(pi, "sandbox-config");
-          let loadedConfig: LoadedSandboxConfig;
-          try {
-            loadedConfig = loadConfig(ctx.cwd, sandboxConfigOverride);
-          } catch (error) {
-            notify(ctx, error instanceof Error ? error.message : `${error}`, "error");
-            return;
-          }
+          const loadedConfig = loadSandboxConfigForContext(ctx, ctx.cwd, sandboxConfigOverride);
+          if (!loadedConfig) return;
+
           sandboxConfigPaths = loadedConfig.paths;
           const parseErrors = getSandboxConfigParseErrors(sandboxConfigPaths);
           if (parseErrors.length > 0) {
