@@ -10,7 +10,7 @@ import { Type } from "@sinclair/typebox";
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const MEMORY_DIR_NAME = ".memory";
+const MEMORY_DIR_NAME = ".agents/memory";
 const CORE_BLOCK_NAMES = ["directives", "context", "focus", "pending"] as const;
 const LOG_TYPES = ["decision", "prompt", "plan", "experiment"] as const;
 const IMPORTANCE_LEVELS = ["high", "medium", "low"] as const;
@@ -216,10 +216,11 @@ export default function memoryExtension(pi: ExtensionAPI): void {
     defineTool({
       name: "memory_update_block",
       label: "Memory Update Block",
-      description: "Update one .memory/core block while enforcing the shared 300-line cap",
-      promptSnippet: "Update one core memory block in .memory/core with 300-line cap enforcement",
+      description: "Update one .agents/memory/core block while enforcing the shared 300-line cap",
+      promptSnippet:
+        "Update one core memory block in .agents/memory/core with 300-line cap enforcement",
       promptGuidelines: [
-        "Use this tool when updating .memory/core/directives.md, context.md, focus.md, or pending.md.",
+        "Use this tool when updating .agents/memory/core/directives.md, context.md, focus.md, or pending.md.",
         "If a write would exceed the 300-line core cap, run memory_dream or remove content first.",
       ],
       parameters: MEMORY_UPDATE_BLOCK_PARAMS,
@@ -230,7 +231,7 @@ export default function memoryExtension(pi: ExtensionAPI): void {
           content: [
             {
               type: "text",
-              text: `Updated .memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines total).`,
+              text: `Updated .agents/memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines total).`,
             },
           ],
           details: {
@@ -246,8 +247,8 @@ export default function memoryExtension(pi: ExtensionAPI): void {
     defineTool({
       name: "memory_append_log",
       label: "Memory Append Log",
-      description: "Append an entry to .memory/log.md using the repo memory log format",
-      promptSnippet: "Append an entry to the repo memory log at .memory/log.md",
+      description: "Append an entry to .agents/memory/log.md using the repo memory log format",
+      promptSnippet: "Append an entry to the repo memory log at .agents/memory/log.md",
       promptGuidelines: [
         "Use this tool for non-trivial decisions, discoveries, plans, experiments, prompt ingests, and raw media additions worth remembering.",
         "Use importance labels high, medium, or low.",
@@ -267,7 +268,7 @@ export default function memoryExtension(pi: ExtensionAPI): void {
           content: [
             {
               type: "text",
-              text: `Appended .memory/log.md entry: ${entry.title}.`,
+              text: `Appended .agents/memory/log.md entry: ${entry.title}.`,
             },
           ],
           details: entry,
@@ -281,10 +282,10 @@ export default function memoryExtension(pi: ExtensionAPI): void {
       name: "memory_dream",
       label: "Memory Dream",
       description:
-        "Consolidate repo memory into .memory/core from newer log entries and compaction context",
+        "Consolidate repo memory into .agents/memory/core from newer log entries and compaction context",
       promptSnippet: "Consolidate repo memory with dream-based core compression",
       promptGuidelines: [
-        "Dream is the only consolidation mechanism for .memory/core.",
+        "Dream is the only consolidation mechanism for .agents/memory/core.",
         "Use this tool when logs have accumulated, core needs compression, or recent compaction context should be folded into memory.",
       ],
       parameters: MEMORY_DREAM_PARAMS,
@@ -295,16 +296,12 @@ export default function memoryExtension(pi: ExtensionAPI): void {
   );
 
   pi.registerCommand("memory", {
-    description: "Manage project-local memory in .memory/",
+    description: "Manage project-local memory in .agents/memory/",
     getArgumentCompletions: getMemoryArgumentCompletions,
     handler: async (args, ctx) => {
       const parsed = parseMemoryCommandArgs(args);
       if (!parsed) {
-        notify(
-          ctx,
-          "Usage: /memory init | status | dream [reason] | log <text> | focus <text>",
-          "warning",
-        );
+        notify(ctx, "Usage: /memory init | status | dream [reason]", "warning");
         return;
       }
 
@@ -321,36 +318,6 @@ export default function memoryExtension(pi: ExtensionAPI): void {
         }
         case "dream": {
           await toolDream(ctx.cwd, ctx, parsed.text || undefined);
-          return;
-        }
-        case "log": {
-          if (!parsed.text) {
-            notify(ctx, "Usage: /memory log <text>", "warning");
-            return;
-          }
-
-          const entry = await appendMemoryLog(
-            ctx.cwd,
-            "prompt",
-            deriveLogTitle(parsed.text),
-            parsed.text,
-            DEFAULT_LOG_IMPORTANCE,
-          );
-          notify(ctx, `Appended .memory/log.md entry: ${entry.title}.`, "info");
-          return;
-        }
-        case "focus": {
-          if (!parsed.text) {
-            notify(ctx, "Usage: /memory focus <text>", "warning");
-            return;
-          }
-
-          const result = await updateCoreBlock(ctx.cwd, "focus", parsed.text);
-          notify(
-            ctx,
-            `Updated .memory/core/focus.md (${result.totalLines}/${CORE_LINE_CAP} lines total).`,
-            "info",
-          );
           return;
         }
       }
@@ -898,12 +865,14 @@ async function listResearchFiles(cwd: string): Promise<string[]> {
 }
 
 async function ensureRawPathIgnored(gitignoreFile: string): Promise<boolean> {
-  const rawLine = "/.memory/raw/";
+  const rawLine = "/.agents/memory/raw/";
   const current = (await readTextIfExists(gitignoreFile)) ?? "";
   const lines = current.replace(/\r/g, "").split("\n");
   const alreadyIgnored = lines.some((line) => {
     const trimmed = line.trim();
-    return trimmed === rawLine || trimmed === ".memory/raw/" || trimmed === "/.memory/raw";
+    return (
+      trimmed === rawLine || trimmed === ".agents/memory/raw/" || trimmed === "/.agents/memory/raw"
+    );
   });
 
   if (alreadyIgnored) {
@@ -1047,13 +1016,13 @@ function buildMemoryPrompt(blocks: CoreBlocks, researchFiles: string[]): string 
   const sections = [
     "<repo_memory>",
     "Use repo memory only for project-local continuity.",
-    "Treat .memory/README.md as the source of truth for this repo's memory layout and usage rules.",
+    "Treat .agents/memory/README.md as the source of truth for this repo's memory layout and usage rules.",
     "Do not invent an ad hoc memory workflow when the repo already documents one.",
     "Rules:",
-    `- .memory/core/ is immediate working memory. Enforce the shared ${CORE_LINE_CAP}-line cap only when writing core or finalizing a dream.`,
-    "- .memory/research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not store local notes, plans, or project summaries there.",
-    "- .memory/raw/ is only for user-requested media files used to collaborate with the user. If you add one, also append a log entry naming the file and why it exists.",
-    "- .memory/log.md is append-only and should capture non-trivial decisions, prompt ingests, plans, experiments, and raw media additions.",
+    `- .agents/memory/core/ is immediate working memory. Enforce the shared ${CORE_LINE_CAP}-line cap only when writing core or finalizing a dream.`,
+    "- .agents/memory/research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not store local notes, plans, or project summaries there.",
+    "- .agents/memory/raw/ is only for user-requested media files used to collaborate with the user. If you add one, also append a log entry naming the file and why it exists.",
+    "- .agents/memory/log.md is append-only and should capture non-trivial decisions, prompt ingests, plans, experiments, and raw media additions.",
     "- If the user provides a substantial brief, append it as a prompt entry with high importance.",
     researchFiles.length > 0
       ? `- Research abstracts available: ${researchFiles.join(", ")}`
@@ -1075,7 +1044,7 @@ function buildMemoryReadme(): string {
   return [
     "# Repo memory",
     "",
-    "This repository uses Pi-managed project-local memory under `.memory/`.",
+    "This repository uses Pi-managed project-local memory under `.agents/memory/`.",
     "",
     "## Layout",
     "",
@@ -1182,7 +1151,7 @@ function formatInitResult(result: { created: string[]; gitignoreUpdated: boolean
   }
 
   return parts.length > 0
-    ? `Initialized .memory/ (${parts.join(", ")}).`
+    ? `Initialized .agents/memory/ (${parts.join(", ")}).`
     : "Memory already initialized.";
 }
 
@@ -1219,7 +1188,7 @@ function formatAutoDreamError(error: unknown): string {
 
 function parseMemoryCommandArgs(
   args: string,
-): { command: "init" | "status" | "dream" | "log" | "focus"; text: string } | null {
+): { command: "init" | "status" | "dream"; text: string } | null {
   const trimmed = args.trim();
   if (!trimmed) {
     return null;
@@ -1229,13 +1198,7 @@ function parseMemoryCommandArgs(
   const command = (firstSpace === -1 ? trimmed : trimmed.slice(0, firstSpace)).toLowerCase();
   const text = firstSpace === -1 ? "" : trimmed.slice(firstSpace + 1).trim();
 
-  if (
-    command === "init" ||
-    command === "status" ||
-    command === "dream" ||
-    command === "log" ||
-    command === "focus"
-  ) {
+  if (command === "init" || command === "status" || command === "dream") {
     return { command, text };
   }
 
@@ -1254,8 +1217,6 @@ function getMemoryArgumentCompletions(
     { value: "init", label: "init" },
     { value: "status", label: "status" },
     { value: "dream", label: "dream" },
-    { value: "log ", label: "log" },
-    { value: "focus ", label: "focus" },
   ];
   const matches = options.filter((option) => option.label.startsWith(normalized));
   return matches.length > 0 ? matches : null;
@@ -1514,11 +1475,6 @@ function normalizeTitle(text: string): string {
 
 function normalizeInlineText(text: unknown): string {
   return typeof text === "string" ? text.replace(/\s+/g, " ").trim() : "";
-}
-
-function deriveLogTitle(text: string): string {
-  const firstLine = text.replace(/\r/g, "").split("\n")[0] ?? text;
-  return normalizeTitle(firstLine || "Memory log entry");
 }
 
 function truncateText(text: string, maxLength: number): string {
