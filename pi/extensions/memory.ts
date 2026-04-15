@@ -16,13 +16,13 @@ const LOG_TYPES = ["decision", "prompt", "plan", "experiment"] as const;
 const IMPORTANCE_LEVELS = ["high", "medium", "low"] as const;
 
 const CORE_LINE_CAP = 300;
-const AUTO_DREAM_MIN_UNDREAMED = 8;
+const AUTO_DREAM_MIN_UNDREAMED_LOGS = 8;
 const AUTO_DREAM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const CORE_DREAM_HINT_LINES = 240;
+const AUTO_DREAM_CORE_LINE_THRESHOLD = 240;
 const MAX_PENDING_COMPACTIONS = 8;
-const MAX_RECALLED_LOGS = 12;
-const MAX_RECALL_TERMS = 20;
-const RECALLED_BODY_LIMIT = 1200;
+const MAX_RETRIEVED_LOGS = 12;
+const MAX_RETRIEVAL_TERMS = 20;
+const RETRIEVED_LOG_BODY_CHAR_LIMIT = 1200;
 const DEFAULT_LOG_IMPORTANCE: ImportanceLevel = "medium";
 
 const MEMORY_UPDATE_BLOCK_PARAMS = Type.Object({
@@ -145,7 +145,7 @@ type PendingCompaction = {
 type MemoryState = {
   last_log_at: string | null;
   last_dream_at: string | null;
-  last_dream_log_at: string | null;
+  last_dreamed_log_at: string | null;
   pending_compactions: PendingCompaction[];
 };
 
@@ -163,7 +163,7 @@ type MemoryStatus = {
   missingCoreFiles: MemoryBlockName[];
   lastLogAt: string | null;
   lastDreamAt: string | null;
-  lastDreamLogAt: string | null;
+  lastDreamedLogAt: string | null;
   undreamedLogs: number;
   pendingCompactions: number;
   researchFiles: number;
@@ -173,8 +173,8 @@ type MemoryStatus = {
 type DreamReplay = {
   blocks: CoreBlocks;
   totalLines: number;
-  recentEntries: LogEntry[];
-  recalledEntries: LogEntry[];
+  undreamedEntries: LogEntry[];
+  retrievedEntries: LogEntry[];
   pendingCompactions: PendingCompaction[];
   researchFiles: string[];
 };
@@ -190,7 +190,7 @@ type DreamResult = {
   consumedLogs: number;
   consumedCompactions: number;
   lastDreamAt: string;
-  lastDreamLogAt: string | null;
+  lastDreamedLogAt: string | null;
 };
 
 type AutoDreamStatus = {
@@ -507,7 +507,7 @@ async function runMemoryDream(
         consumedLogs: 0,
         consumedCompactions: 0,
         lastDreamAt: (await readStateUnsafe(cwd)).last_dream_at ?? nowIso(),
-        lastDreamLogAt: (await readStateUnsafe(cwd)).last_dream_log_at,
+        lastDreamedLogAt: (await readStateUnsafe(cwd)).last_dreamed_log_at,
       };
     }
 
@@ -568,12 +568,12 @@ async function runMemoryDream(
 
     const previousState = await readStateUnsafe(cwd);
     const dreamTimestamp = nowIso();
-    const lastDreamLogAt =
-      replay.recentEntries.at(-1)?.timestamp ?? previousState.last_dream_log_at;
+    const lastDreamedLogAt =
+      replay.undreamedEntries.at(-1)?.timestamp ?? previousState.last_dreamed_log_at;
     await writeStateUnsafe(cwd, {
       ...previousState,
       last_dream_at: dreamTimestamp,
-      last_dream_log_at: lastDreamLogAt,
+      last_dreamed_log_at: lastDreamedLogAt,
       pending_compactions: [],
     });
 
@@ -587,10 +587,10 @@ async function runMemoryDream(
     return {
       summary,
       updatedBlocks,
-      consumedLogs: replay.recentEntries.length,
+      consumedLogs: replay.undreamedEntries.length,
       consumedCompactions: replay.pendingCompactions.length,
       lastDreamAt: dreamTimestamp,
-      lastDreamLogAt,
+      lastDreamedLogAt,
     };
   });
 }
@@ -620,7 +620,7 @@ async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
       missingCoreFiles: [...CORE_BLOCK_NAMES],
       lastLogAt: null,
       lastDreamAt: null,
-      lastDreamLogAt: null,
+      lastDreamedLogAt: null,
       undreamedLogs: 0,
       pendingCompactions: 0,
       researchFiles: 0,
@@ -644,8 +644,8 @@ async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
     missingCoreFiles: core.missing,
     lastLogAt: entries.at(-1)?.timestamp ?? state.last_log_at,
     lastDreamAt: state.last_dream_at,
-    lastDreamLogAt: state.last_dream_log_at,
-    undreamedLogs: countUndreamedLogs(entries, state.last_dream_log_at),
+    lastDreamedLogAt: state.last_dreamed_log_at,
+    undreamedLogs: countUndreamedLogs(entries, state.last_dreamed_log_at),
     pendingCompactions: state.pending_compactions.length,
     researchFiles: researchFiles.length,
     hasLog,
@@ -660,12 +660,12 @@ async function loadAutoDreamStatus(cwd: string): Promise<AutoDreamStatus> {
     readTextIfExists(paths.logFile),
   ]);
   const entries = parseMemoryLog(logText ?? "");
-  const recentEntries = selectRecentLogEntries(entries, state.last_dream_log_at);
+  const undreamedEntries = selectUndreamedLogEntries(entries, state.last_dreamed_log_at);
 
   return {
     coreLines: core.totalLines,
-    undreamedLogs: recentEntries.length,
-    oldestUndreamedAt: recentEntries[0]?.timestamp ?? null,
+    undreamedLogs: undreamedEntries.length,
+    oldestUndreamedAt: undreamedEntries[0]?.timestamp ?? null,
     pendingCompactions: state.pending_compactions.length,
   };
 }
@@ -763,10 +763,10 @@ async function collectDreamReplay(cwd: string, reason?: string): Promise<DreamRe
     listResearchFiles(cwd),
   ]);
   const entries = parseMemoryLog(logText ?? "");
-  const recentEntries = selectRecentLogEntries(entries, state.last_dream_log_at);
-  const recalledEntries = selectRecalledLogEntries(
+  const undreamedEntries = selectUndreamedLogEntries(entries, state.last_dreamed_log_at);
+  const retrievedEntries = selectRetrievedLogEntries(
     entries,
-    recentEntries,
+    undreamedEntries,
     core.blocks,
     reason,
     state.pending_compactions,
@@ -775,8 +775,8 @@ async function collectDreamReplay(cwd: string, reason?: string): Promise<DreamRe
   return {
     blocks: core.blocks,
     totalLines: core.totalLines,
-    recentEntries,
-    recalledEntries,
+    undreamedEntries,
+    retrievedEntries,
     pendingCompactions: state.pending_compactions,
     researchFiles,
   };
@@ -831,8 +831,8 @@ async function readStateUnsafe(cwd: string): Promise<MemoryState> {
     return {
       last_log_at: typeof parsed.last_log_at === "string" ? parsed.last_log_at : null,
       last_dream_at: typeof parsed.last_dream_at === "string" ? parsed.last_dream_at : null,
-      last_dream_log_at:
-        typeof parsed.last_dream_log_at === "string" ? parsed.last_dream_log_at : null,
+      last_dreamed_log_at:
+        typeof parsed.last_dreamed_log_at === "string" ? parsed.last_dreamed_log_at : null,
       pending_compactions: Array.isArray(parsed.pending_compactions)
         ? parsed.pending_compactions
             .map((entry) => normalizePendingCompaction(entry))
@@ -913,13 +913,13 @@ function buildDreamUserMessage(replay: DreamReplay, reason?: string): UserMessag
     replay.blocks.pending.trimEnd() || "(empty)",
     "</core>",
     "",
-    `<recent-log count="${replay.recentEntries.length}">`,
-    formatLogEntriesForPrompt(replay.recentEntries, false) || "(none)",
-    "</recent-log>",
+    `<undreamed-log count="${replay.undreamedEntries.length}">`,
+    formatLogEntriesForPrompt(replay.undreamedEntries, false) || "(none)",
+    "</undreamed-log>",
     "",
-    `<recalled-log count="${replay.recalledEntries.length}">`,
-    formatLogEntriesForPrompt(replay.recalledEntries, true) || "(none)",
-    "</recalled-log>",
+    `<retrieved-log count="${replay.retrievedEntries.length}">`,
+    formatLogEntriesForPrompt(replay.retrievedEntries, true) || "(none)",
+    "</retrieved-log>",
     "",
     `<compaction-notes count="${replay.pendingCompactions.length}">`,
     formatPendingCompactionsForPrompt(replay.pendingCompactions) || "(none)",
@@ -1052,7 +1052,7 @@ function buildMemoryReadme(): string {
     "- `research/` — short abstracts of actual external SOTA research relevant to the current problem. Do not use this for local notes, plans, implementation details, or project summaries.",
     "- `raw/` — only user-requested media files used to collaborate with the user. This folder is gitignored. If you add something here, also append a log entry naming the file and why it exists.",
     "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, and raw media additions.",
-    "- `.state.json` — internal Pi state for the last log timestamp, last dream timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
+    "- `.state.json` — internal Pi state for the last log timestamp, last dream timestamp, last dreamed log timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
     "",
     "## Write rules",
     "",
@@ -1069,7 +1069,7 @@ function buildMemoryReadme(): string {
     "",
     "Pi can trigger dreaming automatically on session start when logs are stale and after compaction when new compaction context should be folded into memory. You can also run `/memory dream` manually.",
     "",
-    "Dream reads all log entries newer than the last dreamed log timestamp and may recall older high-signal log entries while consolidating.",
+    "Dream reads all log entries newer than the last dreamed log timestamp and may retrieve older high-signal log entries while consolidating.",
     "",
   ].join("\n");
 }
@@ -1081,8 +1081,8 @@ function buildDreamSummary(
 ): string {
   const parts = [
     updatedBlocks.length > 0 ? `updated ${updatedBlocks.join(", ")}` : "updated no core blocks",
-    replay.recentEntries.length > 0
-      ? `consumed ${replay.recentEntries.length} new log entr${replay.recentEntries.length === 1 ? "y" : "ies"}`
+    replay.undreamedEntries.length > 0
+      ? `consumed ${replay.undreamedEntries.length} new log entr${replay.undreamedEntries.length === 1 ? "y" : "ies"}`
       : "consumed no new log entries",
     replay.pendingCompactions.length > 0
       ? `folded ${replay.pendingCompactions.length} compaction note${replay.pendingCompactions.length === 1 ? "" : "s"}`
@@ -1097,11 +1097,11 @@ function buildAutoDreamReason(status: AutoDreamStatus, trigger: AutoDreamTrigger
     return `Automatic dream after compaction with ${status.pendingCompactions} pending compaction note${status.pendingCompactions === 1 ? "" : "s"}.`;
   }
 
-  if (status.undreamedLogs >= AUTO_DREAM_MIN_UNDREAMED) {
+  if (status.undreamedLogs >= AUTO_DREAM_MIN_UNDREAMED_LOGS) {
     return `Automatic dream on session start with ${status.undreamedLogs} undreamed log entries.`;
   }
 
-  if (status.coreLines >= CORE_DREAM_HINT_LINES && status.undreamedLogs > 0) {
+  if (status.coreLines >= AUTO_DREAM_CORE_LINE_THRESHOLD && status.undreamedLogs > 0) {
     return `Automatic dream on session start with core at ${status.coreLines}/${CORE_LINE_CAP} lines and fresh log backlog.`;
   }
 
@@ -1116,7 +1116,7 @@ function formatLogEntriesForPrompt(entries: LogEntry[], truncateBodies: boolean)
   return entries
     .map((entry) => {
       const body = truncateBodies
-        ? truncateText(entry.body.trim(), RECALLED_BODY_LIMIT)
+        ? truncateText(entry.body.trim(), RETRIEVED_LOG_BODY_CHAR_LIMIT)
         : entry.body.trim();
       return [
         `## ${entry.timestamp} | ${entry.type} | ${entry.importance} | ${entry.title}`,
@@ -1165,7 +1165,7 @@ function formatMemoryStatus(status: MemoryStatus): string {
     `Core lines: ${status.coreLines}/${CORE_LINE_CAP}`,
     `Last log: ${status.lastLogAt ?? "never"}`,
     `Last dream: ${status.lastDreamAt ?? "never"}`,
-    `Last dreamed log: ${status.lastDreamLogAt ?? "never"}`,
+    `Last dreamed log timestamp: ${status.lastDreamedLogAt ?? "never"}`,
     `Undreamed logs: ${status.undreamedLogs}`,
     `Pending compactions: ${status.pendingCompactions}`,
     `Research abstracts: ${status.researchFiles}`,
@@ -1235,7 +1235,7 @@ function defaultMemoryState(): MemoryState {
   return {
     last_log_at: null,
     last_dream_at: null,
-    last_dream_log_at: null,
+    last_dreamed_log_at: null,
     pending_compactions: [],
   };
 }
@@ -1274,9 +1274,9 @@ function getMemoryPaths(cwd: string): {
 
 function shouldRunDream(replay: DreamReplay, reason?: string): boolean {
   return (
-    replay.recentEntries.length > 0 ||
+    replay.undreamedEntries.length > 0 ||
     replay.pendingCompactions.length > 0 ||
-    replay.totalLines >= CORE_DREAM_HINT_LINES ||
+    replay.totalLines >= AUTO_DREAM_CORE_LINE_THRESHOLD ||
     Boolean(reason?.trim())
   );
 }
@@ -1294,11 +1294,11 @@ function shouldAutoDream(status: AutoDreamStatus, trigger: AutoDreamTrigger): bo
     return false;
   }
 
-  if (status.undreamedLogs >= AUTO_DREAM_MIN_UNDREAMED) {
+  if (status.undreamedLogs >= AUTO_DREAM_MIN_UNDREAMED_LOGS) {
     return true;
   }
 
-  if (status.coreLines >= CORE_DREAM_HINT_LINES) {
+  if (status.coreLines >= AUTO_DREAM_CORE_LINE_THRESHOLD) {
     return true;
   }
 
@@ -1352,42 +1352,47 @@ function parseMemoryLog(text: string): LogEntry[] {
   return entries.sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
-function selectRecentLogEntries(entries: LogEntry[], lastDreamLogAt: string | null): LogEntry[] {
-  if (!lastDreamLogAt) {
+function selectUndreamedLogEntries(
+  entries: LogEntry[],
+  lastDreamedLogAt: string | null,
+): LogEntry[] {
+  if (!lastDreamedLogAt) {
     return [...entries];
   }
-  return entries.filter((entry) => entry.timestamp > lastDreamLogAt);
+  return entries.filter((entry) => entry.timestamp > lastDreamedLogAt);
 }
 
-function selectRecalledLogEntries(
+function selectRetrievedLogEntries(
   entries: LogEntry[],
-  recentEntries: LogEntry[],
+  undreamedEntries: LogEntry[],
   blocks: CoreBlocks,
   reason: string | undefined,
   pendingCompactions: PendingCompaction[],
 ): LogEntry[] {
-  const recentKeys = new Set(recentEntries.map((entry) => `${entry.timestamp}|${entry.title}`));
-  const recallTerms = extractRecallTerms([
+  const undreamedKeys = new Set(
+    undreamedEntries.map((entry) => `${entry.timestamp}|${entry.title}`),
+  );
+  const retrievalTerms = extractRetrievalTerms([
     blocks.directives,
     blocks.context,
     blocks.focus,
     blocks.pending,
     reason ?? "",
-    ...recentEntries.map((entry) => `${entry.title}\n${entry.body}`),
+    ...undreamedEntries.map((entry) => `${entry.title}\n${entry.body}`),
     ...pendingCompactions.map((entry) => entry.summary),
   ]);
 
   return entries
-    .filter((entry) => !recentKeys.has(`${entry.timestamp}|${entry.title}`))
-    .map((entry) => ({ entry, score: scoreRecalledEntry(entry, recallTerms) }))
+    .filter((entry) => !undreamedKeys.has(`${entry.timestamp}|${entry.title}`))
+    .map((entry) => ({ entry, score: scoreRetrievedEntry(entry, retrievalTerms) }))
     .filter(({ score }) => score > 0)
     .sort((a, b) => b.score - a.score || b.entry.timestamp.localeCompare(a.entry.timestamp))
-    .slice(0, MAX_RECALLED_LOGS)
+    .slice(0, MAX_RETRIEVED_LOGS)
     .map(({ entry }) => entry)
     .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
 }
 
-function extractRecallTerms(texts: string[]): string[] {
+function extractRetrievalTerms(texts: string[]): string[] {
   const counts = new Map<string, number>();
 
   for (const text of texts) {
@@ -1401,15 +1406,15 @@ function extractRecallTerms(texts: string[]): string[] {
 
   return [...counts.entries()]
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, MAX_RECALL_TERMS)
+    .slice(0, MAX_RETRIEVAL_TERMS)
     .map(([token]) => token);
 }
 
-function scoreRecalledEntry(entry: LogEntry, recallTerms: string[]): number {
+function scoreRetrievedEntry(entry: LogEntry, retrievalTerms: string[]): number {
   const haystack = `${entry.title}\n${entry.body}`.toLowerCase();
   let score = importanceWeight(entry.importance);
 
-  for (const term of recallTerms) {
+  for (const term of retrievalTerms) {
     if (haystack.includes(term)) {
       score += 2;
     }
@@ -1433,8 +1438,8 @@ function importanceWeight(importance: ImportanceLevel): number {
   }
 }
 
-function countUndreamedLogs(entries: LogEntry[], lastDreamLogAt: string | null): number {
-  return selectRecentLogEntries(entries, lastDreamLogAt).length;
+function countUndreamedLogs(entries: LogEntry[], lastDreamedLogAt: string | null): number {
+  return selectUndreamedLogEntries(entries, lastDreamedLogAt).length;
 }
 
 function normalizePendingCompaction(input: unknown): PendingCompaction | null {
