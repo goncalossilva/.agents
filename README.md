@@ -63,7 +63,7 @@ By default it sets up all agents. Pass `--codex`, `--claude`, and/or `--pi` to l
 | insights | `/insights` | Analyze Pi sessions and suggest reusable instructions, templates, skills, and extensions |
 | interlude | `ctrl+x` <small>(configurable)</small> | Stash the current message draft, send one interlude message, then restore the draft |
 | loop | `/loop` | Repeat a prompt until the agent signals success |
-| memory | `/memory` | Pi-only repo memory with core blocks, research abstracts, raw collaboration media, append-only logs, and automatic/manual dream consolidation |
+| memory | `/memory` | Opt-in project-local memory for learning and continuity across sessions |
 | notify |  | Terminal notification when the agent is waiting for input |
 | openai-verbosity | `/verbosity` | Set verbosity for supported OpenAI models |
 | review | `/review`, `/triage` | Multi-focus review and PR feedback triage for PRs, branches, commits, and local changes, with integrated follow-up fixes |
