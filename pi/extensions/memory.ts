@@ -15,6 +15,8 @@ const CORE_BLOCK_NAMES = ["directives", "context", "focus", "pending"] as const;
 const LOG_TYPES = ["decision", "prompt", "plan", "experiment"] as const;
 const IMPORTANCE_LEVELS = ["high", "medium", "low"] as const;
 
+// Keep core small and readable. The line cap is the primary structure constraint.
+// The character cap is a secondary backstop against packing too much dense text into too few lines.
 const CORE_LINE_CAP = 300;
 const CORE_CHAR_CAP = 20_000;
 const AUTO_DREAM_MIN_UNDREAMED_LOGS = 8;
@@ -65,7 +67,6 @@ Schema:
 Rules:
 - Update only the four core blocks.
 - Keep the combined total across all returned blocks at or below ${CORE_LINE_CAP} lines and ${CORE_CHAR_CAP} characters.
-- Treat the line cap as readability/editability control and the character cap as a rough context-control backstop, not exact token accounting.
 - Enforce both caps only in your output, not by dropping input context from the read phase.
 - Consolidate only from the provided core, undreamed logs, and compaction notes. Do not retrieve or invent older raw log entries.
 - directives: stable rules, preferences, and standing constraints.
@@ -1106,7 +1107,7 @@ function buildMemoryReadme(): string {
     "",
     "## Layout",
     "",
-    `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines and ${CORE_CHAR_CAP} characters. Treat the line cap as a readability/editability constraint and the character cap as a rough context-control backstop, not exact token accounting. Enforce both caps only when writing core or finalizing a dream, not when reading.`,
+    `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines and ${CORE_CHAR_CAP} characters. Enforce both caps only when writing core or finalizing a dream, not when reading.`,
     "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, attachment additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
     "- `compactions/` — immutable dream and compaction summaries with provenance.",
     "- `research/` — use it for short abstracts of actual external SOTA research that materially informs the current work. Read relevant files on demand before relying on them.",
