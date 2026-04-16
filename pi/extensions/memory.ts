@@ -174,6 +174,10 @@ type AutoDreamStatus = {
 
 type AutoDreamTrigger = "session_start" | "session_compact";
 
+type AutoDreamState = {
+  promise: Promise<void> | null;
+};
+
 type ModelSelection = {
   model: Model<Api>;
   apiKey?: string;
@@ -189,229 +193,6 @@ class MemoryReadmeMissingError extends Error {
 
 function isMemoryReadmeMissingError(error: unknown): error is MemoryReadmeMissingError {
   return error instanceof MemoryReadmeMissingError;
-}
-
-export default function memoryExtension(pi: ExtensionAPI): void {
-  let autoDreamPromise: Promise<void> | null = null;
-  let pendingStartupDreamCheck = false;
-
-  pi.registerTool(
-    defineTool({
-      name: "memory_update_block",
-      label: "Memory Update Block",
-      description: `Update one .agents/memory/core block while enforcing the shared ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character caps`,
-      promptSnippet: `Update one core memory block in .agents/memory/core with ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character cap enforcement`,
-      promptGuidelines: [
-        "Use this tool when updating .agents/memory/core/directives.md, context.md, focus.md, or pending.md.",
-        `If a write would exceed the ${CORE_LINE_CAP}-line or ${CORE_CHAR_CAP}-character core cap, run memory_dream or remove content first.`,
-      ],
-      parameters: MEMORY_UPDATE_BLOCK_PARAMS,
-      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        const result = await updateCoreBlock(ctx.cwd, params.name, params.content);
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Updated .agents/memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines, ${result.totalChars}/${CORE_CHAR_CAP} chars).`,
-            },
-          ],
-          details: {
-            block: params.name,
-            total_lines: result.totalLines,
-            total_chars: result.totalChars,
-          },
-        };
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "memory_append_log",
-      label: "Memory Append Log",
-      description: "Append an entry to .agents/memory/log.md using the repo memory log format",
-      promptSnippet: "Append an entry to the repo memory log at .agents/memory/log.md",
-      promptGuidelines: [
-        "Use this tool for important decisions, discoveries, plans, experiments, prompt ingests, and attachment additions worth remembering.",
-        "Use importance labels high, medium, or low.",
-        "If this entry replaces or corrects prior memory, set supersedes and/or invalidates links explicitly.",
-        "The memory log is append-only. Do not rewrite or truncate older entries.",
-      ],
-      parameters: MEMORY_APPEND_LOG_PARAMS,
-      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        const entry = await appendMemoryLog(ctx.cwd, {
-          type: params.type,
-          title: params.title,
-          body: params.body,
-          importance: params.importance,
-          supersedes: params.supersedes,
-          invalidates: params.invalidates,
-        });
-
-        return {
-          content: [
-            {
-              type: "text",
-              text: `Appended .agents/memory/log.md entry: ${entry.title}.`,
-            },
-          ],
-          details: entry,
-        };
-      },
-    }),
-  );
-
-  pi.registerTool(
-    defineTool({
-      name: "memory_dream",
-      label: "Memory Dream",
-      description:
-        "Consolidate repo memory into .agents/memory/core from newer log entries and compaction context",
-      promptSnippet: "Consolidate repo memory with dream-based core compression",
-      promptGuidelines: [
-        "Dream is the only consolidation mechanism for .agents/memory/core.",
-        "Use this tool when logs have accumulated, core needs compression, or recent compaction context should be folded into memory.",
-      ],
-      parameters: MEMORY_DREAM_PARAMS,
-      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        return toolDream(ctx.cwd, ctx, params.reason);
-      },
-    }),
-  );
-
-  pi.registerCommand("memory", {
-    description: "Manage project-local memory in .agents/memory/",
-    getArgumentCompletions: getMemoryArgumentCompletions,
-    handler: async (args, ctx) => {
-      const parsed = parseMemoryCommandArgs(args);
-      if (!parsed) {
-        notify(ctx, "Usage: /memory init | status | dream [reason]", "warning");
-        return;
-      }
-
-      switch (parsed.command) {
-        case "init": {
-          const result = await initMemory(ctx.cwd);
-          notify(ctx, formatInitResult(result), "info");
-          return;
-        }
-        case "status": {
-          const status = await loadMemoryStatus(ctx.cwd);
-          notify(ctx, formatMemoryStatus(status), "info");
-          return;
-        }
-        case "dream": {
-          await toolDream(ctx.cwd, ctx, parsed.text || undefined);
-          return;
-        }
-      }
-    },
-  });
-
-  pi.on("before_agent_start", async (event, ctx) => {
-    try {
-      const prompt = await loadMemoryPrompt(ctx.cwd);
-      if (!prompt) {
-        return;
-      }
-
-      return {
-        systemPrompt: `${event.systemPrompt}\n\n${prompt}`,
-      };
-    } catch (error) {
-      if (isMemoryReadmeMissingError(error)) {
-        notify(ctx, `Repo memory disabled: ${error.message}`, "warning");
-        return;
-      }
-      throw error;
-    }
-  });
-
-  pi.on("session_start", async (_event, ctx) => {
-    pendingStartupDreamCheck = !(await maybeScheduleAutoDream(
-      ctx.cwd,
-      ctx,
-      "session_start",
-      setAutoDreamPromise,
-    ));
-  });
-
-  pi.on("model_select", async (event, ctx) => {
-    if (!pendingStartupDreamCheck) {
-      return;
-    }
-
-    if (event.source !== "restore" && event.previousModel) {
-      return;
-    }
-
-    pendingStartupDreamCheck = false;
-    await maybeScheduleAutoDream(ctx.cwd, ctx, "session_start", setAutoDreamPromise);
-  });
-
-  pi.on("session_compact", async (event, ctx) => {
-    const paths = getMemoryPaths(ctx.cwd);
-    if (!(await pathExists(paths.memoryRoot))) {
-      return;
-    }
-
-    const pendingCompaction = {
-      timestamp: event.compactionEntry.timestamp,
-      summary: event.compactionEntry.summary,
-    };
-
-    await Promise.all([
-      enqueuePendingCompaction(ctx.cwd, pendingCompaction),
-      writeCompactionSummary(ctx.cwd, pendingCompaction),
-    ]);
-    await maybeScheduleAutoDream(ctx.cwd, ctx, "session_compact", setAutoDreamPromise);
-  });
-
-  function setAutoDreamPromise(promise: Promise<void> | null): void {
-    autoDreamPromise = promise;
-  }
-
-  async function maybeScheduleAutoDream(
-    cwd: string,
-    ctx: ExtensionContext,
-    trigger: AutoDreamTrigger,
-    setPromise: (promise: Promise<void> | null) => void,
-  ): Promise<boolean> {
-    if (!ctx.model) {
-      return false;
-    }
-
-    if (autoDreamPromise) {
-      return true;
-    }
-
-    const paths = getMemoryPaths(cwd);
-    if (!(await pathExists(paths.memoryRoot))) {
-      return true;
-    }
-
-    const status = await loadAutoDreamStatus(cwd);
-    if (!shouldAutoDream(status, trigger)) {
-      return true;
-    }
-
-    const reason = buildAutoDreamReason(status, trigger);
-    const promise = runMemoryDream(cwd, ctx, reason)
-      .then(() => undefined)
-      .catch((error) => {
-        if (isMemoryReadmeMissingError(error)) {
-          return;
-        }
-        notify(ctx, formatAutoDreamError(error), "warning");
-      })
-      .finally(() => {
-        setPromise(null);
-      });
-
-    setPromise(promise);
-    return true;
-  }
 }
 
 async function toolDream(
@@ -431,6 +212,46 @@ async function toolDream(
     }
     throw error;
   }
+}
+
+async function maybeScheduleAutoDream(
+  cwd: string,
+  ctx: ExtensionContext,
+  trigger: AutoDreamTrigger,
+  state: AutoDreamState,
+): Promise<boolean> {
+  if (!ctx.model) {
+    return false;
+  }
+
+  if (state.promise) {
+    return true;
+  }
+
+  const paths = getMemoryPaths(cwd);
+  if (!(await pathExists(paths.memoryRoot))) {
+    return true;
+  }
+
+  const status = await loadAutoDreamStatus(cwd);
+  if (!shouldAutoDream(status, trigger)) {
+    return true;
+  }
+
+  const reason = buildAutoDreamReason(status, trigger);
+  state.promise = runMemoryDream(cwd, ctx, reason)
+    .then(() => undefined)
+    .catch((error) => {
+      if (isMemoryReadmeMissingError(error)) {
+        return;
+      }
+      notify(ctx, formatAutoDreamError(error), "warning");
+    })
+    .finally(() => {
+      state.promise = null;
+    });
+
+  return true;
 }
 
 // Mutating entry points acquire the path locks they need before touching memory files.
@@ -1761,4 +1582,182 @@ function parsePossiblyWrappedJson(raw: string): unknown {
     }
     throw new Error("Output is not valid JSON");
   }
+}
+
+export default function memoryExtension(pi: ExtensionAPI): void {
+  const autoDreamState: AutoDreamState = { promise: null };
+  let pendingStartupDreamCheck = false;
+
+  pi.registerTool(
+    defineTool({
+      name: "memory_update_block",
+      label: "Memory Update Block",
+      description: `Update one .agents/memory/core block while enforcing the shared ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character caps`,
+      promptSnippet: `Update one core memory block in .agents/memory/core with ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character cap enforcement`,
+      promptGuidelines: [
+        "Use this tool when updating .agents/memory/core/directives.md, context.md, focus.md, or pending.md.",
+        `If a write would exceed the ${CORE_LINE_CAP}-line or ${CORE_CHAR_CAP}-character core cap, run memory_dream or remove content first.`,
+      ],
+      parameters: MEMORY_UPDATE_BLOCK_PARAMS,
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        const result = await updateCoreBlock(ctx.cwd, params.name, params.content);
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Updated .agents/memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines, ${result.totalChars}/${CORE_CHAR_CAP} chars).`,
+            },
+          ],
+          details: {
+            block: params.name,
+            total_lines: result.totalLines,
+            total_chars: result.totalChars,
+          },
+        };
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "memory_append_log",
+      label: "Memory Append Log",
+      description: "Append an entry to .agents/memory/log.md using the repo memory log format",
+      promptSnippet: "Append an entry to the repo memory log at .agents/memory/log.md",
+      promptGuidelines: [
+        "Use this tool for important decisions, discoveries, plans, experiments, prompt ingests, and attachment additions worth remembering.",
+        "Use importance labels high, medium, or low.",
+        "If this entry replaces or corrects prior memory, set supersedes and/or invalidates links explicitly.",
+        "The memory log is append-only. Do not rewrite or truncate older entries.",
+      ],
+      parameters: MEMORY_APPEND_LOG_PARAMS,
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        const entry = await appendMemoryLog(ctx.cwd, {
+          type: params.type,
+          title: params.title,
+          body: params.body,
+          importance: params.importance,
+          supersedes: params.supersedes,
+          invalidates: params.invalidates,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Appended .agents/memory/log.md entry: ${entry.title}.`,
+            },
+          ],
+          details: entry,
+        };
+      },
+    }),
+  );
+
+  pi.registerTool(
+    defineTool({
+      name: "memory_dream",
+      label: "Memory Dream",
+      description:
+        "Consolidate repo memory into .agents/memory/core from newer log entries and compaction context",
+      promptSnippet: "Consolidate repo memory with dream-based core compression",
+      promptGuidelines: [
+        "Dream is the only consolidation mechanism for .agents/memory/core.",
+        "Use this tool when logs have accumulated, core needs compression, or recent compaction context should be folded into memory.",
+      ],
+      parameters: MEMORY_DREAM_PARAMS,
+      async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+        return toolDream(ctx.cwd, ctx, params.reason);
+      },
+    }),
+  );
+
+  pi.registerCommand("memory", {
+    description: "Manage project-local memory in .agents/memory/",
+    getArgumentCompletions: getMemoryArgumentCompletions,
+    handler: async (args, ctx) => {
+      const parsed = parseMemoryCommandArgs(args);
+      if (!parsed) {
+        notify(ctx, "Usage: /memory init | status | dream [reason]", "warning");
+        return;
+      }
+
+      switch (parsed.command) {
+        case "init": {
+          const result = await initMemory(ctx.cwd);
+          notify(ctx, formatInitResult(result), "info");
+          return;
+        }
+        case "status": {
+          const status = await loadMemoryStatus(ctx.cwd);
+          notify(ctx, formatMemoryStatus(status), "info");
+          return;
+        }
+        case "dream": {
+          await toolDream(ctx.cwd, ctx, parsed.text || undefined);
+          return;
+        }
+      }
+    },
+  });
+
+  pi.on("before_agent_start", async (event, ctx) => {
+    try {
+      const prompt = await loadMemoryPrompt(ctx.cwd);
+      if (!prompt) {
+        return;
+      }
+
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${prompt}`,
+      };
+    } catch (error) {
+      if (isMemoryReadmeMissingError(error)) {
+        notify(ctx, `Repo memory disabled: ${error.message}`, "warning");
+        return;
+      }
+      throw error;
+    }
+  });
+
+  pi.on("session_start", async (_event, ctx) => {
+    pendingStartupDreamCheck = !(await maybeScheduleAutoDream(
+      ctx.cwd,
+      ctx,
+      "session_start",
+      autoDreamState,
+    ));
+  });
+
+  pi.on("model_select", async (event, ctx) => {
+    if (!pendingStartupDreamCheck) {
+      return;
+    }
+
+    if (event.source !== "restore" && event.previousModel) {
+      return;
+    }
+
+    pendingStartupDreamCheck = false;
+    await maybeScheduleAutoDream(ctx.cwd, ctx, "session_start", autoDreamState);
+  });
+
+  pi.on("session_compact", async (event, ctx) => {
+    const paths = getMemoryPaths(ctx.cwd);
+    if (!(await pathExists(paths.memoryRoot))) {
+      return;
+    }
+
+    const pendingCompaction = {
+      timestamp: event.compactionEntry.timestamp,
+      summary: event.compactionEntry.summary,
+    };
+
+    await Promise.all([
+      enqueuePendingCompaction(ctx.cwd, pendingCompaction),
+      writeCompactionSummary(ctx.cwd, pendingCompaction),
+    ]);
+    await maybeScheduleAutoDream(ctx.cwd, ctx, "session_compact", autoDreamState);
+  });
 }
