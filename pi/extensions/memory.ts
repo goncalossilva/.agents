@@ -100,9 +100,13 @@ type PendingCompaction = {
 };
 
 type MemoryState = {
+  // Newest timestamp appended to log.md.
   lastLogAt: string | null;
+  // Timestamp of the most recent successful dream run.
   lastDreamAt: string | null;
+  // Next dream replays log.md entries newer than this timestamp.
   lastDreamedLogAt: string | null;
+  // session_compact summaries waiting to be folded into core.
   pendingCompactions: PendingCompaction[];
 };
 
@@ -400,6 +404,7 @@ async function toolDream(
   };
 }
 
+// Mutating entry points acquire the path locks they need before touching memory files.
 async function initMemory(cwd: string): Promise<{ created: string[]; gitignoreUpdated: boolean }> {
   const paths = getMemoryPaths(cwd);
   const lockPaths = [
@@ -468,6 +473,10 @@ async function enqueuePendingCompaction(cwd: string, compaction: PendingCompacti
   });
 }
 
+// Dream reads current core, log.md entries newer than lastDreamedLogAt,
+// pending compactions, and the memory README rules.
+// Dream writes rewritten core blocks, a dream summary in compactions/,
+// and state.json with lastDreamAt, lastDreamedLogAt, and an empty pendingCompactions queue.
 async function runMemoryDream(
   cwd: string,
   ctx: ExtensionContext,
@@ -678,6 +687,7 @@ async function loadAutoDreamStatus(cwd: string): Promise<AutoDreamStatus> {
   };
 }
 
+// Mutating *Unsafe helpers assume the corresponding path locks are already held.
 async function initMemoryUnsafe(
   cwd: string,
 ): Promise<{ created: string[]; gitignoreUpdated: boolean }> {
@@ -903,6 +913,8 @@ async function writeDreamSummary(
   return path.relative(cwd, filePath);
 }
 
+// Runtime prompts embed .agents/memory/README.md directly.
+// If the file does not exist yet, use the bootstrap README text.
 async function readMemoryReadme(cwd: string): Promise<string> {
   const readme = await readTextIfExists(getMemoryPaths(cwd).readmeFile);
   return readme ?? buildMemoryReadme();
@@ -1050,6 +1062,8 @@ function normalizeDreamBlocks(current: CoreBlocks, next: Partial<CoreBlocks>): C
   return normalized;
 }
 
+// Reject dream proposals that clear pending.md unless the summary says the work
+// was resolved or abandoned.
 function wouldWipePendingWithoutResolution(
   previousPending: string,
   nextPending: string,
@@ -1339,6 +1353,8 @@ function shouldRunDream(replay: DreamReplay, reason?: string): boolean {
   );
 }
 
+// Auto-dream runs immediately when pending compactions exist.
+// Otherwise it only runs on session_start, based on log backlog, core size, or log age.
 function shouldAutoDream(status: AutoDreamStatus, trigger: AutoDreamTrigger): boolean {
   if (status.pendingCompactions > 0) {
     return true;
