@@ -1078,7 +1078,7 @@ function buildMemoryReadme(): string {
     "- `research/` — short abstracts of actual external SOTA research relevant to the current problem. Do not use this for local notes, plans, implementation details, or project summaries.",
     "- `raw/` — only user-requested media files used to collaborate with the user. This folder is gitignored. If you add something here, also append a log entry naming the file and why it exists.",
     "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, raw media additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
-    "- `.state.json` — internal Pi state for the last log timestamp, last dream timestamp, last dreamed log timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
+    "- `state.json` — internal Pi state for the last log timestamp, last dream timestamp, last dreamed log timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
     "",
     "## Write rules",
     "",
@@ -1286,7 +1286,7 @@ function getMemoryPaths(cwd: string): {
     researchDir: path.join(memoryRoot, "research"),
     rawDir: path.join(memoryRoot, "raw"),
     logFile: path.join(memoryRoot, "log.md"),
-    stateFile: path.join(memoryRoot, ".state.json"),
+    stateFile: path.join(memoryRoot, "state.json"),
     readmeFile: path.join(memoryRoot, "README.md"),
     gitignoreFile: path.join(cwd, ".gitignore"),
     coreFiles: {
