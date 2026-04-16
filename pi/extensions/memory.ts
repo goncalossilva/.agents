@@ -16,6 +16,7 @@ const LOG_TYPES = ["decision", "prompt", "plan", "experiment"] as const;
 const IMPORTANCE_LEVELS = ["high", "medium", "low"] as const;
 
 const CORE_LINE_CAP = 300;
+const CORE_CHAR_CAP = 20_000;
 const AUTO_DREAM_MIN_UNDREAMED_LOGS = 8;
 const AUTO_DREAM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const AUTO_DREAM_CORE_LINE_THRESHOLD = 240;
@@ -63,8 +64,9 @@ Schema:
 
 Rules:
 - Update only the four core blocks.
-- Keep the combined total across all returned blocks at or below 300 lines.
-- Enforce the cap only in your output, not by dropping input context from the read phase.
+- Keep the combined total across all returned blocks at or below ${CORE_LINE_CAP} lines and ${CORE_CHAR_CAP} characters.
+- Treat the line cap as readability/editability control and the character cap as a rough context-control backstop, not exact token accounting.
+- Enforce both caps only in your output, not by dropping input context from the read phase.
 - Consolidate only from the provided core, undreamed logs, and compaction notes. Do not retrieve or invent older raw log entries.
 - directives: stable rules, preferences, and standing constraints.
 - context: stable architecture, behavior, important decisions, and lessons from failed or rejected attempts.
@@ -117,12 +119,14 @@ type CoreReadResult = {
   blocks: CoreBlocks;
   missing: MemoryBlockName[];
   totalLines: number;
+  totalChars: number;
 };
 
 type MemoryStatus = {
   initialized: boolean;
   coreExists: boolean;
   coreLines: number;
+  coreChars: number;
   missingCoreFiles: MemoryBlockName[];
   lastLogAt: string | null;
   lastDreamAt: string | null;
@@ -137,6 +141,7 @@ type DreamReplay = {
   readme: string;
   blocks: CoreBlocks;
   totalLines: number;
+  totalChars: number;
   undreamedEntries: LogEntry[];
   pendingCompactions: PendingCompaction[];
   researchFiles: string[];
@@ -180,12 +185,11 @@ export default function memoryExtension(pi: ExtensionAPI): void {
     defineTool({
       name: "memory_update_block",
       label: "Memory Update Block",
-      description: "Update one .agents/memory/core block while enforcing the shared 300-line cap",
-      promptSnippet:
-        "Update one core memory block in .agents/memory/core with 300-line cap enforcement",
+      description: `Update one .agents/memory/core block while enforcing the shared ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character caps`,
+      promptSnippet: `Update one core memory block in .agents/memory/core with ${CORE_LINE_CAP}-line and ${CORE_CHAR_CAP}-character cap enforcement`,
       promptGuidelines: [
         "Use this tool when updating .agents/memory/core/directives.md, context.md, focus.md, or pending.md.",
-        "If a write would exceed the 300-line core cap, run memory_dream or remove content first.",
+        `If a write would exceed the ${CORE_LINE_CAP}-line or ${CORE_CHAR_CAP}-character core cap, run memory_dream or remove content first.`,
       ],
       parameters: MEMORY_UPDATE_BLOCK_PARAMS,
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -195,12 +199,13 @@ export default function memoryExtension(pi: ExtensionAPI): void {
           content: [
             {
               type: "text",
-              text: `Updated .agents/memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines total).`,
+              text: `Updated .agents/memory/core/${params.name}.md (${result.totalLines}/${CORE_LINE_CAP} lines, ${result.totalChars}/${CORE_CHAR_CAP} chars).`,
             },
           ],
           details: {
             block: params.name,
             total_lines: result.totalLines,
+            total_chars: result.totalChars,
           },
         };
       },
@@ -416,7 +421,7 @@ async function updateCoreBlock(
   cwd: string,
   name: MemoryBlockName,
   content: string,
-): Promise<{ totalLines: number }> {
+): Promise<{ totalLines: number; totalChars: number }> {
   const paths = getMemoryPaths(cwd);
   return withMemoryMutationQueue(Object.values(paths.coreFiles), async () =>
     updateCoreBlockUnsafe(cwd, name, content),
@@ -548,6 +553,13 @@ async function runMemoryDream(
       );
     }
 
+    const finalCoreChars = getCoreCharCount(finalBlocks);
+    if (finalCoreChars > CORE_CHAR_CAP) {
+      throw new Error(
+        `Memory dream proposed ${finalCoreChars} core characters, exceeding the ${CORE_CHAR_CAP}-character cap.`,
+      );
+    }
+
     await writeCoreBlocksUnsafe(cwd, finalBlocks);
 
     const previousState = await readStateUnsafe(cwd);
@@ -612,6 +624,7 @@ async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
       initialized: false,
       coreExists: false,
       coreLines: 0,
+      coreChars: 0,
       missingCoreFiles: [...CORE_BLOCK_NAMES],
       lastLogAt: null,
       lastDreamAt: null,
@@ -636,6 +649,7 @@ async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
     initialized: true,
     coreExists: core.exists,
     coreLines: core.totalLines,
+    coreChars: core.totalChars,
     missingCoreFiles: core.missing,
     lastLogAt: entries.at(-1)?.timestamp ?? state.lastLogAt,
     lastDreamAt: state.lastDreamAt,
@@ -703,7 +717,7 @@ async function updateCoreBlockUnsafe(
   cwd: string,
   name: MemoryBlockName,
   content: string,
-): Promise<{ totalLines: number }> {
+): Promise<{ totalLines: number; totalChars: number }> {
   const paths = getMemoryPaths(cwd);
   ensureMemoryInitialized(await pathExists(paths.memoryRoot));
 
@@ -713,16 +727,22 @@ async function updateCoreBlockUnsafe(
     [name]: normalizeMarkdownBlock(content),
   };
   const totalLines = getCoreLineCount(nextBlocks);
-
   if (totalLines > CORE_LINE_CAP) {
     throw new Error(
       `Core block update would exceed the ${CORE_LINE_CAP}-line cap (${totalLines}). Run memory_dream or remove content first.`,
     );
   }
 
+  const totalChars = getCoreCharCount(nextBlocks);
+  if (totalChars > CORE_CHAR_CAP) {
+    throw new Error(
+      `Core block update would exceed the ${CORE_CHAR_CAP}-character cap (${totalChars}). Run memory_dream or remove content first.`,
+    );
+  }
+
   await ensureDir(paths.coreDir);
   await fs.writeFile(paths.coreFiles[name], nextBlocks[name], "utf8");
-  return { totalLines };
+  return { totalLines, totalChars };
 }
 
 async function appendMemoryLogUnsafe(cwd: string, entry: LogEntry): Promise<LogEntry> {
@@ -765,6 +785,7 @@ async function collectDreamReplay(cwd: string): Promise<DreamReplay> {
     readme,
     blocks: core.blocks,
     totalLines: core.totalLines,
+    totalChars: core.totalChars,
     undreamedEntries,
     pendingCompactions: state.pendingCompactions,
     researchFiles,
@@ -806,6 +827,7 @@ async function readCoreBlocksUnsafe(cwd: string): Promise<CoreReadResult> {
     blocks,
     missing: missing.sort((a, b) => CORE_BLOCK_NAMES.indexOf(a) - CORE_BLOCK_NAMES.indexOf(b)),
     totalLines: getCoreLineCount(blocks),
+    totalChars: getCoreCharCount(blocks),
   };
 }
 
@@ -935,7 +957,7 @@ async function writeIfMissing(filePath: string, content: string): Promise<boolea
 function buildDreamUserMessage(replay: DreamReplay, reason?: string): UserMessage {
   const prompt = [
     reason?.trim() ? `Dream reason: ${reason.trim()}` : "Dream reason: consolidate repo memory.",
-    `Current core lines: ${replay.totalLines}/${CORE_LINE_CAP}`,
+    `Current core size: ${replay.totalLines}/${CORE_LINE_CAP} lines, ${replay.totalChars}/${CORE_CHAR_CAP} chars`,
     "",
     "Source-of-truth memory rules:",
     "<memory-readme>",
@@ -1084,7 +1106,7 @@ function buildMemoryReadme(): string {
     "",
     "## Layout",
     "",
-    `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines. Enforce that cap only when writing core or finalizing a dream, not when reading.`,
+    `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines and ${CORE_CHAR_CAP} characters. Treat the line cap as a readability/editability constraint and the character cap as a rough context-control backstop, not exact token accounting. Enforce both caps only when writing core or finalizing a dream, not when reading.`,
     "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, attachment additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
     "- `compactions/` — immutable dream and compaction summaries with provenance.",
     "- `research/` — use it for short abstracts of actual external SOTA research that materially informs the current work. Read relevant files on demand before relying on them.",
@@ -1197,6 +1219,7 @@ function formatMemoryStatus(status: MemoryStatus): string {
   const lines = [
     "Memory: initialized",
     `Core lines: ${status.coreLines}/${CORE_LINE_CAP}`,
+    `Core chars: ${status.coreChars}/${CORE_CHAR_CAP}`,
     `Last log: ${status.lastLogAt ?? "never"}`,
     `Last dream: ${status.lastDreamAt ?? "never"}`,
     `Last dreamed log timestamp: ${status.lastDreamedLogAt ?? "never"}`,
@@ -1568,9 +1591,17 @@ function getCoreLineCount(blocks: CoreBlocks): number {
   return CORE_BLOCK_NAMES.reduce((total, name) => total + countLines(blocks[name]), 0);
 }
 
+function getCoreCharCount(blocks: CoreBlocks): number {
+  return CORE_BLOCK_NAMES.reduce((total, name) => total + countChars(blocks[name]), 0);
+}
+
 function countLines(text: string): number {
   const normalized = text.replace(/\r/g, "").replace(/\n+$/g, "");
   return normalized ? normalized.split("\n").length : 0;
+}
+
+function countChars(text: string): number {
+  return text.replace(/\r/g, "").replace(/\n+$/g, "").length;
 }
 
 function normalizeMarkdownBlock(text: string): string {
