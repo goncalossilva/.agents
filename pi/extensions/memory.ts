@@ -134,6 +134,7 @@ type MemoryStatus = {
 };
 
 type DreamReplay = {
+  readme: string;
   blocks: CoreBlocks;
   totalLines: number;
   undreamedEntries: LogEntry[];
@@ -594,12 +595,13 @@ async function loadMemoryPrompt(cwd: string): Promise<string | undefined> {
     return undefined;
   }
 
-  const [core, researchFiles] = await Promise.all([
+  const [readme, core, researchFiles] = await Promise.all([
+    readMemoryReadme(cwd),
     readCoreBlocksUnsafe(cwd),
     listResearchFiles(cwd),
   ]);
 
-  return buildMemoryPrompt(core.blocks, researchFiles);
+  return buildMemoryPrompt(readme, core.blocks, researchFiles);
 }
 
 async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
@@ -749,7 +751,8 @@ async function appendMemoryLogUnsafe(cwd: string, entry: LogEntry): Promise<LogE
 
 async function collectDreamReplay(cwd: string): Promise<DreamReplay> {
   const paths = getMemoryPaths(cwd);
-  const [core, state, logText, researchFiles] = await Promise.all([
+  const [readme, core, state, logText, researchFiles] = await Promise.all([
+    readMemoryReadme(cwd),
     readCoreBlocksUnsafe(cwd),
     readStateUnsafe(cwd),
     readTextIfExists(paths.logFile),
@@ -759,6 +762,7 @@ async function collectDreamReplay(cwd: string): Promise<DreamReplay> {
   const undreamedEntries = selectUndreamedLogEntries(entries, state.lastDreamedLogAt);
 
   return {
+    readme,
     blocks: core.blocks,
     totalLines: core.totalLines,
     undreamedEntries,
@@ -878,6 +882,11 @@ async function writeDreamSummary(
   return path.relative(cwd, filePath);
 }
 
+async function readMemoryReadme(cwd: string): Promise<string> {
+  const readme = await readTextIfExists(getMemoryPaths(cwd).readmeFile);
+  return readme ?? buildMemoryReadme();
+}
+
 async function listResearchFiles(cwd: string): Promise<string[]> {
   const researchDir = getMemoryPaths(cwd).researchDir;
   if (!(await pathExists(researchDir))) {
@@ -925,6 +934,11 @@ function buildDreamUserMessage(replay: DreamReplay, reason?: string): UserMessag
   const prompt = [
     reason?.trim() ? `Dream reason: ${reason.trim()}` : "Dream reason: consolidate repo memory.",
     `Current core lines: ${replay.totalLines}/${CORE_LINE_CAP}`,
+    "",
+    "Source-of-truth memory rules:",
+    "<memory-readme>",
+    replay.readme.trimEnd() || "(missing)",
+    "</memory-readme>",
     "",
     "<core>",
     "## directives.md",
@@ -1035,23 +1049,18 @@ function mentionsResolution(text: string): boolean {
   );
 }
 
-function buildMemoryPrompt(blocks: CoreBlocks, researchFiles: string[]): string {
+function buildMemoryPrompt(readme: string, blocks: CoreBlocks, researchFiles: string[]): string {
   const sections = [
     "<repo_memory>",
     "Use repo memory for continuity across sessions in this repo.",
-    "Treat .agents/memory/README.md as the source of truth for this repo's memory layout and usage rules.",
-    "Do not invent an ad hoc memory workflow when the repo already documents one.",
-    "Rules:",
-    `- .agents/memory/core/ is working memory. Enforce the shared ${CORE_LINE_CAP}-line cap only when writing core or finalizing a dream.`,
-    "- .agents/memory/research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not store local notes, plans, or project summaries there.",
-    "- .agents/memory/raw/ is only for user-requested media files used to collaborate with the user. If you add one, also append a log entry naming the file and why it exists.",
-    "- .agents/memory/log.md is append-only and should capture important decisions, prompt ingests, plans, experiments, raw media additions, and lessons from failed or rejected attempts.",
-    "- If a new entry replaces or corrects prior memory, include explicit supersedes and/or invalidates links in the log entry.",
-    "- Dream consolidates only core, undreamed logs, and pending compaction summaries. It does not automatically retrieve older raw log entries.",
-    "- If the user provides a substantial brief, append it as a prompt entry with high importance.",
+    "Source-of-truth memory rules:",
+    "<memory-readme>",
+    readme.trimEnd() || "(missing)",
+    "</memory-readme>",
+    "",
     researchFiles.length > 0
-      ? `- Research abstracts available: ${researchFiles.join(", ")}`
-      : "- Research abstracts available: none.",
+      ? `Research abstracts available: ${researchFiles.join(", ")}`
+      : "Research abstracts available: none.",
     "",
     `### directives.md\n${blocks.directives.trimEnd() || "(empty)"}`,
     "",
@@ -1075,9 +1084,9 @@ function buildMemoryReadme(): string {
     "",
     `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines. Enforce that cap only when writing core or finalizing a dream, not when reading.`,
     "- `compactions/` — immutable dream and compaction summaries with provenance.",
-    "- `research/` — short abstracts of actual external SOTA research relevant to the current problem. Do not use this for local notes, plans, implementation details, or project summaries.",
-    "- `raw/` — only user-requested media files used to collaborate with the user. This folder is gitignored. If you add something here, also append a log entry naming the file and why it exists.",
-    "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, raw media additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
+    "- `research/` — use it for short abstracts of actual external SOTA research that materially informs the current work. Read relevant files on demand before relying on them.",
+    "- `attachments/` — only user-requested or user-facing files used to collaborate with the user. This folder is gitignored. Do not use it as scratch space. If you add something here, also append a log entry naming the file and why it exists.",
+    "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, attachment additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
     "- `state.json` — internal Pi state for the last log timestamp, last dream timestamp, last dreamed log timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
     "",
     "## Write rules",
