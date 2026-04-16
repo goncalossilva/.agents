@@ -71,7 +71,7 @@ Rules:
 - focus: the current objective and immediate next steps.
 - pending: unresolved follow-ups, open questions, blocked work.
 - research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not invent or rewrite research files here.
-- raw/ is only for user-requested media assets used to collaborate with the user. Do not use raw/ as scratch storage.
+- attachments/ is only for user-requested or user-facing files used to collaborate with the user. Do not use attachments/ as scratch space.
 - Use explicit invalidates/supersedes links when resolving contradictions.
 - Preserve unresolved pending items. Do not clear pending unless the summary explicitly says they were resolved or abandoned.
 - Keep every block short, concrete, and high-signal.
@@ -214,7 +214,7 @@ export default function memoryExtension(pi: ExtensionAPI): void {
       description: "Append an entry to .agents/memory/log.md using the repo memory log format",
       promptSnippet: "Append an entry to the repo memory log at .agents/memory/log.md",
       promptGuidelines: [
-        "Use this tool for important decisions, discoveries, plans, experiments, prompt ingests, and raw media additions worth remembering.",
+        "Use this tool for important decisions, discoveries, plans, experiments, prompt ingests, and attachment additions worth remembering.",
         "Use importance labels high, medium, or low.",
         "If this entry replaces or corrects prior memory, set supersedes and/or invalidates links explicitly.",
         "The memory log is append-only. Do not rewrite or truncate older entries.",
@@ -405,7 +405,7 @@ async function initMemory(cwd: string): Promise<{ created: string[]; gitignoreUp
     paths.stateFile,
     paths.compactionsDir,
     paths.researchDir,
-    paths.rawDir,
+    paths.attachmentsDir,
     ...Object.values(paths.coreFiles),
   ];
 
@@ -675,7 +675,7 @@ async function initMemoryUnsafe(
   await ensureDir(paths.coreDir);
   await ensureDir(paths.compactionsDir);
   await ensureDir(paths.researchDir);
-  await ensureDir(paths.rawDir);
+  await ensureDir(paths.attachmentsDir);
 
   for (const name of CORE_BLOCK_NAMES) {
     if (await writeIfMissing(paths.coreFiles[name], "")) {
@@ -695,7 +695,7 @@ async function initMemoryUnsafe(
     created.push(path.relative(cwd, paths.readmeFile));
   }
 
-  const gitignoreUpdated = await ensureRawPathIgnored(paths.gitignoreFile);
+  const gitignoreUpdated = await ensureAttachmentsPathIgnored(paths.gitignoreFile);
   return { created, gitignoreUpdated };
 }
 
@@ -900,14 +900,16 @@ async function listResearchFiles(cwd: string): Promise<string[]> {
     .sort();
 }
 
-async function ensureRawPathIgnored(gitignoreFile: string): Promise<boolean> {
-  const rawLine = "/.agents/memory/raw/";
+async function ensureAttachmentsPathIgnored(gitignoreFile: string): Promise<boolean> {
+  const attachmentsLine = "/.agents/memory/attachments/";
   const current = (await readTextIfExists(gitignoreFile)) ?? "";
   const lines = current.replace(/\r/g, "").split("\n");
   const alreadyIgnored = lines.some((line) => {
     const trimmed = line.trim();
     return (
-      trimmed === rawLine || trimmed === ".agents/memory/raw/" || trimmed === "/.agents/memory/raw"
+      trimmed === attachmentsLine ||
+      trimmed === ".agents/memory/attachments/" ||
+      trimmed === "/.agents/memory/attachments"
     );
   });
 
@@ -916,7 +918,7 @@ async function ensureRawPathIgnored(gitignoreFile: string): Promise<boolean> {
   }
 
   const prefix = current.length === 0 ? "" : current.endsWith("\n") ? "" : "\n";
-  await fs.writeFile(gitignoreFile, `${current}${prefix}${rawLine}\n`, "utf8");
+  await fs.writeFile(gitignoreFile, `${current}${prefix}${attachmentsLine}\n`, "utf8");
   return true;
 }
 
@@ -1095,7 +1097,7 @@ function buildMemoryReadme(): string {
     "- If architecture or behavior changes, update `core/context.md`.",
     "- If user preferences or standing constraints change, update `core/directives.md`.",
     "- If focus shifts, update `core/focus.md`.",
-    "- If an important decision, prompt ingest, plan, experiment, raw media addition, or lesson from a failed or rejected attempt happens, append to `log.md`.",
+    "- If an important decision, prompt ingest, plan, experiment, attachment addition, or lesson from a failed or rejected attempt happens, append to `log.md`.",
     "- If a new log entry replaces or corrects prior memory, include explicit `supersedes` and/or `invalidates` links.",
     "- If the user provides a substantial brief, append it as a `prompt | high` log entry.",
     "",
@@ -1278,7 +1280,7 @@ function getMemoryPaths(cwd: string): {
   coreDir: string;
   compactionsDir: string;
   researchDir: string;
-  rawDir: string;
+  attachmentsDir: string;
   logFile: string;
   stateFile: string;
   readmeFile: string;
@@ -1293,7 +1295,7 @@ function getMemoryPaths(cwd: string): {
     coreDir,
     compactionsDir: path.join(memoryRoot, "compactions"),
     researchDir: path.join(memoryRoot, "research"),
-    rawDir: path.join(memoryRoot, "raw"),
+    attachmentsDir: path.join(memoryRoot, "attachments"),
     logFile: path.join(memoryRoot, "log.md"),
     stateFile: path.join(memoryRoot, "state.json"),
     readmeFile: path.join(memoryRoot, "README.md"),
