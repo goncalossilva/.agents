@@ -180,6 +180,17 @@ type ModelSelection = {
   headers?: Record<string, string>;
 };
 
+class MemoryReadmeMissingError extends Error {
+  constructor(readmePath: string) {
+    super(`${readmePath} is missing. Run /memory init to recreate it or restore it from git.`);
+    this.name = "MemoryReadmeMissingError";
+  }
+}
+
+function isMemoryReadmeMissingError(error: unknown): error is MemoryReadmeMissingError {
+  return error instanceof MemoryReadmeMissingError;
+}
+
 export default function memoryExtension(pi: ExtensionAPI): void {
   let autoDreamPromise: Promise<void> | null = null;
   let pendingStartupDreamCheck = false;
@@ -299,14 +310,22 @@ export default function memoryExtension(pi: ExtensionAPI): void {
   });
 
   pi.on("before_agent_start", async (event, ctx) => {
-    const prompt = await loadMemoryPrompt(ctx.cwd);
-    if (!prompt) {
-      return;
-    }
+    try {
+      const prompt = await loadMemoryPrompt(ctx.cwd);
+      if (!prompt) {
+        return;
+      }
 
-    return {
-      systemPrompt: `${event.systemPrompt}\n\n${prompt}`,
-    };
+      return {
+        systemPrompt: `${event.systemPrompt}\n\n${prompt}`,
+      };
+    } catch (error) {
+      if (isMemoryReadmeMissingError(error)) {
+        notify(ctx, `Repo memory disabled: ${error.message}`, "warning");
+        return;
+      }
+      throw error;
+    }
   });
 
   pi.on("session_start", async (_event, ctx) => {
@@ -381,6 +400,9 @@ export default function memoryExtension(pi: ExtensionAPI): void {
     const promise = runMemoryDream(cwd, ctx, reason)
       .then(() => undefined)
       .catch((error) => {
+        if (isMemoryReadmeMissingError(error)) {
+          return;
+        }
         notify(ctx, formatAutoDreamError(error), "warning");
       })
       .finally(() => {
@@ -397,11 +419,18 @@ async function toolDream(
   ctx: ExtensionContext,
   reason?: string,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: DreamResult }> {
-  const result = await runMemoryDream(cwd, ctx, reason);
-  return {
-    content: [{ type: "text", text: result.summary }],
-    details: result,
-  };
+  try {
+    const result = await runMemoryDream(cwd, ctx, reason);
+    return {
+      content: [{ type: "text", text: result.summary }],
+      details: result,
+    };
+  } catch (error) {
+    if (isMemoryReadmeMissingError(error)) {
+      notify(ctx, error.message, "warning");
+    }
+    throw error;
+  }
 }
 
 // Mutating entry points acquire the path locks they need before touching memory files.
@@ -913,11 +942,16 @@ async function writeDreamSummary(
   return path.relative(cwd, filePath);
 }
 
-// Runtime prompts embed .agents/memory/README.md directly.
-// If the file does not exist yet, use the bootstrap README text.
+// Runtime memory use reads .agents/memory/README.md from disk.
+// /memory init recreates it when missing.
 async function readMemoryReadme(cwd: string): Promise<string> {
-  const readme = await readTextIfExists(getMemoryPaths(cwd).readmeFile);
-  return readme ?? buildMemoryReadme();
+  const readmePath = getMemoryPaths(cwd).readmeFile;
+  const readme = await readTextIfExists(readmePath);
+  if (readme !== undefined) {
+    return readme;
+  }
+
+  throw new MemoryReadmeMissingError(path.relative(cwd, readmePath));
 }
 
 async function listResearchFiles(cwd: string): Promise<string[]> {
