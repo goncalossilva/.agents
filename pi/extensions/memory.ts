@@ -20,9 +20,6 @@ const AUTO_DREAM_MIN_UNDREAMED_LOGS = 8;
 const AUTO_DREAM_MAX_AGE_MS = 12 * 60 * 60 * 1000;
 const AUTO_DREAM_CORE_LINE_THRESHOLD = 240;
 const MAX_PENDING_COMPACTIONS = 8;
-const MAX_RETRIEVED_LOGS = 12;
-const MAX_RETRIEVAL_TERMS = 20;
-const RETRIEVED_LOG_BODY_CHAR_LIMIT = 1200;
 const DEFAULT_LOG_IMPORTANCE: ImportanceLevel = "medium";
 
 const MEMORY_UPDATE_BLOCK_PARAMS = Type.Object({
@@ -35,6 +32,14 @@ const MEMORY_APPEND_LOG_PARAMS = Type.Object({
   title: Type.String({ minLength: 1, description: "Short log entry title" }),
   body: Type.String({ description: "Markdown log entry body" }),
   importance: Type.Optional(StringEnum(IMPORTANCE_LEVELS, { description: "Importance label" })),
+  supersedes: Type.Optional(
+    Type.Array(
+      Type.String({ description: "Prior memory references superseded by this log entry" }),
+    ),
+  ),
+  invalidates: Type.Optional(
+    Type.Array(Type.String({ description: "Prior assumptions invalidated by this log entry" })),
+  ),
 });
 
 const MEMORY_DREAM_PARAMS = Type.Object({
@@ -60,68 +65,17 @@ Rules:
 - Update only the four core blocks.
 - Keep the combined total across all returned blocks at or below 300 lines.
 - Enforce the cap only in your output, not by dropping input context from the read phase.
-- directives: stable rules, preferences, and standing operating constraints.
-- context: stable architecture, behavior, important decisions, and durable takeaways.
+- Consolidate only from the provided core, undreamed logs, and compaction notes. Do not retrieve or invent older raw log entries.
+- directives: stable rules, preferences, and standing constraints.
+- context: stable architecture, behavior, important decisions, and lessons from failed or rejected attempts.
 - focus: the current objective and immediate next steps.
 - pending: unresolved follow-ups, open questions, blocked work.
 - research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not invent or rewrite research files here.
 - raw/ is only for user-requested media assets used to collaborate with the user. Do not use raw/ as scratch storage.
+- Use explicit invalidates/supersedes links when resolving contradictions.
 - Preserve unresolved pending items. Do not clear pending unless the summary explicitly says they were resolved or abandoned.
 - Keep every block short, concrete, and high-signal.
 - Self-check that JSON.parse(output) succeeds before responding.`;
-
-const STOP_WORDS = new Set([
-  "about",
-  "after",
-  "agent",
-  "also",
-  "been",
-  "before",
-  "being",
-  "between",
-  "brief",
-  "build",
-  "built",
-  "cannot",
-  "could",
-  "dream",
-  "extension",
-  "from",
-  "have",
-  "into",
-  "just",
-  "like",
-  "make",
-  "memory",
-  "more",
-  "must",
-  "need",
-  "only",
-  "other",
-  "over",
-  "project",
-  "repo",
-  "session",
-  "should",
-  "since",
-  "some",
-  "that",
-  "their",
-  "them",
-  "there",
-  "these",
-  "they",
-  "this",
-  "through",
-  "under",
-  "used",
-  "user",
-  "using",
-  "when",
-  "with",
-  "work",
-  "would",
-]);
 
 type MemoryBlockName = (typeof CORE_BLOCK_NAMES)[number];
 type LogType = (typeof LOG_TYPES)[number];
@@ -135,6 +89,8 @@ type LogEntry = {
   importance: ImportanceLevel;
   title: string;
   body: string;
+  supersedes: string[];
+  invalidates: string[];
 };
 
 type PendingCompaction = {
@@ -143,6 +99,13 @@ type PendingCompaction = {
 };
 
 type MemoryState = {
+  lastLogAt: string | null;
+  lastDreamAt: string | null;
+  lastDreamedLogAt: string | null;
+  pendingCompactions: PendingCompaction[];
+};
+
+type MemoryStateFile = {
   last_log_at: string | null;
   last_dream_at: string | null;
   last_dreamed_log_at: string | null;
@@ -174,7 +137,6 @@ type DreamReplay = {
   blocks: CoreBlocks;
   totalLines: number;
   undreamedEntries: LogEntry[];
-  retrievedEntries: LogEntry[];
   pendingCompactions: PendingCompaction[];
   researchFiles: string[];
 };
@@ -191,6 +153,7 @@ type DreamResult = {
   consumedCompactions: number;
   lastDreamAt: string;
   lastDreamedLogAt: string | null;
+  summaryPath: string | null;
 };
 
 type AutoDreamStatus = {
@@ -250,19 +213,21 @@ export default function memoryExtension(pi: ExtensionAPI): void {
       description: "Append an entry to .agents/memory/log.md using the repo memory log format",
       promptSnippet: "Append an entry to the repo memory log at .agents/memory/log.md",
       promptGuidelines: [
-        "Use this tool for non-trivial decisions, discoveries, plans, experiments, prompt ingests, and raw media additions worth remembering.",
+        "Use this tool for important decisions, discoveries, plans, experiments, prompt ingests, and raw media additions worth remembering.",
         "Use importance labels high, medium, or low.",
+        "If this entry replaces or corrects prior memory, set supersedes and/or invalidates links explicitly.",
         "The memory log is append-only. Do not rewrite or truncate older entries.",
       ],
       parameters: MEMORY_APPEND_LOG_PARAMS,
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-        const entry = await appendMemoryLog(
-          ctx.cwd,
-          params.type,
-          params.title,
-          params.body,
-          params.importance,
-        );
+        const entry = await appendMemoryLog(ctx.cwd, {
+          type: params.type,
+          title: params.title,
+          body: params.body,
+          importance: params.importance,
+          supersedes: params.supersedes,
+          invalidates: params.invalidates,
+        });
 
         return {
           content: [
@@ -363,10 +328,15 @@ export default function memoryExtension(pi: ExtensionAPI): void {
       return;
     }
 
-    await enqueuePendingCompaction(ctx.cwd, {
+    const pendingCompaction = {
       timestamp: event.compactionEntry.timestamp,
       summary: event.compactionEntry.summary,
-    });
+    };
+
+    await Promise.all([
+      enqueuePendingCompaction(ctx.cwd, pendingCompaction),
+      writeCompactionSummary(ctx.cwd, pendingCompaction),
+    ]);
     await maybeScheduleAutoDream(ctx.cwd, ctx, "session_compact", setAutoDreamPromise);
   });
 
@@ -432,6 +402,7 @@ async function initMemory(cwd: string): Promise<{ created: string[]; gitignoreUp
     paths.readmeFile,
     paths.logFile,
     paths.stateFile,
+    paths.compactionsDir,
     paths.researchDir,
     paths.rawDir,
     ...Object.values(paths.coreFiles),
@@ -453,19 +424,25 @@ async function updateCoreBlock(
 
 async function appendMemoryLog(
   cwd: string,
-  type: LogType,
-  title: string,
-  body: string,
-  importance?: ImportanceLevel,
+  entry: {
+    type: LogType;
+    title: string;
+    body: string;
+    importance?: ImportanceLevel;
+    supersedes?: string[];
+    invalidates?: string[];
+  },
 ): Promise<LogEntry> {
   const paths = getMemoryPaths(cwd);
   return withMemoryMutationQueue([paths.logFile, paths.stateFile], async () =>
     appendMemoryLogUnsafe(cwd, {
       timestamp: nowIso(),
-      type,
-      importance: importance ?? DEFAULT_LOG_IMPORTANCE,
-      title: normalizeTitle(title) || "Memory log entry",
-      body: normalizeMarkdownBlock(body),
+      type: entry.type,
+      importance: entry.importance ?? DEFAULT_LOG_IMPORTANCE,
+      title: normalizeTitle(entry.title) || "Memory log entry",
+      body: normalizeMarkdownBlock(entry.body),
+      supersedes: normalizeMemoryReferences(entry.supersedes),
+      invalidates: normalizeMemoryReferences(entry.invalidates),
     }),
   );
 }
@@ -474,14 +451,14 @@ async function enqueuePendingCompaction(cwd: string, compaction: PendingCompacti
   const paths = getMemoryPaths(cwd);
   await withFileMutationQueue(paths.stateFile, async () => {
     const state = await readStateUnsafe(cwd);
-    const pending = [...state.pending_compactions, normalizePendingCompaction(compaction)]
+    const pending = [...state.pendingCompactions, normalizePendingCompaction(compaction)]
       .filter((entry): entry is PendingCompaction => entry !== null)
       .sort((a, b) => a.timestamp.localeCompare(b.timestamp))
       .slice(-MAX_PENDING_COMPACTIONS);
 
     await writeStateUnsafe(cwd, {
       ...state,
-      pending_compactions: pending,
+      pendingCompactions: pending,
     });
   });
 }
@@ -492,12 +469,17 @@ async function runMemoryDream(
   reason?: string,
 ): Promise<DreamResult> {
   const paths = getMemoryPaths(cwd);
-  const lockPaths = [paths.logFile, paths.stateFile, ...Object.values(paths.coreFiles)];
+  const lockPaths = [
+    paths.logFile,
+    paths.stateFile,
+    paths.compactionsDir,
+    ...Object.values(paths.coreFiles),
+  ];
 
   return withMemoryMutationQueue(lockPaths, async () => {
     ensureMemoryInitialized(await pathExists(paths.memoryRoot));
 
-    const replay = await collectDreamReplay(cwd, reason);
+    const replay = await collectDreamReplay(cwd);
     if (!shouldRunDream(replay, reason)) {
       const summary = "Memory dream: nothing to consolidate.";
       notify(ctx, summary, "info");
@@ -506,8 +488,9 @@ async function runMemoryDream(
         updatedBlocks: [],
         consumedLogs: 0,
         consumedCompactions: 0,
-        lastDreamAt: (await readStateUnsafe(cwd)).last_dream_at ?? nowIso(),
-        lastDreamedLogAt: (await readStateUnsafe(cwd)).last_dreamed_log_at,
+        lastDreamAt: (await readStateUnsafe(cwd)).lastDreamAt ?? nowIso(),
+        lastDreamedLogAt: (await readStateUnsafe(cwd)).lastDreamedLogAt,
+        summaryPath: null,
       };
     }
 
@@ -569,12 +552,12 @@ async function runMemoryDream(
     const previousState = await readStateUnsafe(cwd);
     const dreamTimestamp = nowIso();
     const lastDreamedLogAt =
-      replay.undreamedEntries.at(-1)?.timestamp ?? previousState.last_dreamed_log_at;
+      replay.undreamedEntries.at(-1)?.timestamp ?? previousState.lastDreamedLogAt;
     await writeStateUnsafe(cwd, {
       ...previousState,
-      last_dream_at: dreamTimestamp,
-      last_dreamed_log_at: lastDreamedLogAt,
-      pending_compactions: [],
+      lastDreamAt: dreamTimestamp,
+      lastDreamedLogAt,
+      pendingCompactions: [],
     });
 
     const updatedBlocks = CORE_BLOCK_NAMES.filter(
@@ -582,6 +565,15 @@ async function runMemoryDream(
         normalizeMarkdownBlock(replay.blocks[name]) !== normalizeMarkdownBlock(finalBlocks[name]),
     );
     const summary = buildDreamSummary(updatedBlocks, replay, abstraction.summary);
+    const summaryPath = await writeDreamSummary(cwd, {
+      timestamp: dreamTimestamp,
+      reason,
+      summary,
+      updatedBlocks,
+      undreamedEntries: replay.undreamedEntries,
+      pendingCompactions: replay.pendingCompactions,
+      lastDreamedLogAt,
+    });
     notify(ctx, summary, "info");
 
     return {
@@ -591,6 +583,7 @@ async function runMemoryDream(
       consumedCompactions: replay.pendingCompactions.length,
       lastDreamAt: dreamTimestamp,
       lastDreamedLogAt,
+      summaryPath,
     };
   });
 }
@@ -642,11 +635,11 @@ async function loadMemoryStatus(cwd: string): Promise<MemoryStatus> {
     coreExists: core.exists,
     coreLines: core.totalLines,
     missingCoreFiles: core.missing,
-    lastLogAt: entries.at(-1)?.timestamp ?? state.last_log_at,
-    lastDreamAt: state.last_dream_at,
-    lastDreamedLogAt: state.last_dreamed_log_at,
-    undreamedLogs: countUndreamedLogs(entries, state.last_dreamed_log_at),
-    pendingCompactions: state.pending_compactions.length,
+    lastLogAt: entries.at(-1)?.timestamp ?? state.lastLogAt,
+    lastDreamAt: state.lastDreamAt,
+    lastDreamedLogAt: state.lastDreamedLogAt,
+    undreamedLogs: countUndreamedLogs(entries, state.lastDreamedLogAt),
+    pendingCompactions: state.pendingCompactions.length,
     researchFiles: researchFiles.length,
     hasLog,
   };
@@ -660,13 +653,13 @@ async function loadAutoDreamStatus(cwd: string): Promise<AutoDreamStatus> {
     readTextIfExists(paths.logFile),
   ]);
   const entries = parseMemoryLog(logText ?? "");
-  const undreamedEntries = selectUndreamedLogEntries(entries, state.last_dreamed_log_at);
+  const undreamedEntries = selectUndreamedLogEntries(entries, state.lastDreamedLogAt);
 
   return {
     coreLines: core.totalLines,
     undreamedLogs: undreamedEntries.length,
     oldestUndreamedAt: undreamedEntries[0]?.timestamp ?? null,
-    pendingCompactions: state.pending_compactions.length,
+    pendingCompactions: state.pendingCompactions.length,
   };
 }
 
@@ -678,6 +671,7 @@ async function initMemoryUnsafe(
 
   await ensureDir(paths.memoryRoot);
   await ensureDir(paths.coreDir);
+  await ensureDir(paths.compactionsDir);
   await ensureDir(paths.researchDir);
   await ensureDir(paths.rawDir);
 
@@ -735,11 +729,10 @@ async function appendMemoryLogUnsafe(cwd: string, entry: LogEntry): Promise<LogE
 
   const current = (await readTextIfExists(paths.logFile)) ?? "";
   const prefix = current.trim().length > 0 ? current.trimEnd() : "# Memory log";
-  const body = entry.body.trim() || "_No details._";
   const chunk = [
     `## ${entry.timestamp} | ${entry.type} | ${entry.importance} | ${entry.title}`,
     "",
-    body,
+    renderLogEntryBody(entry),
   ].join("\n");
 
   await ensureDir(path.dirname(paths.logFile));
@@ -748,13 +741,13 @@ async function appendMemoryLogUnsafe(cwd: string, entry: LogEntry): Promise<LogE
   const state = await readStateUnsafe(cwd);
   await writeStateUnsafe(cwd, {
     ...state,
-    last_log_at: entry.timestamp,
+    lastLogAt: entry.timestamp,
   });
 
   return entry;
 }
 
-async function collectDreamReplay(cwd: string, reason?: string): Promise<DreamReplay> {
+async function collectDreamReplay(cwd: string): Promise<DreamReplay> {
   const paths = getMemoryPaths(cwd);
   const [core, state, logText, researchFiles] = await Promise.all([
     readCoreBlocksUnsafe(cwd),
@@ -763,21 +756,13 @@ async function collectDreamReplay(cwd: string, reason?: string): Promise<DreamRe
     listResearchFiles(cwd),
   ]);
   const entries = parseMemoryLog(logText ?? "");
-  const undreamedEntries = selectUndreamedLogEntries(entries, state.last_dreamed_log_at);
-  const retrievedEntries = selectRetrievedLogEntries(
-    entries,
-    undreamedEntries,
-    core.blocks,
-    reason,
-    state.pending_compactions,
-  );
+  const undreamedEntries = selectUndreamedLogEntries(entries, state.lastDreamedLogAt);
 
   return {
     blocks: core.blocks,
     totalLines: core.totalLines,
     undreamedEntries,
-    retrievedEntries,
-    pendingCompactions: state.pending_compactions,
+    pendingCompactions: state.pendingCompactions,
     researchFiles,
   };
 }
@@ -827,13 +812,13 @@ async function readStateUnsafe(cwd: string): Promise<MemoryState> {
   }
 
   try {
-    const parsed = JSON.parse(raw) as Partial<MemoryState>;
+    const parsed = JSON.parse(raw) as Partial<MemoryStateFile>;
     return {
-      last_log_at: typeof parsed.last_log_at === "string" ? parsed.last_log_at : null,
-      last_dream_at: typeof parsed.last_dream_at === "string" ? parsed.last_dream_at : null,
-      last_dreamed_log_at:
+      lastLogAt: typeof parsed.last_log_at === "string" ? parsed.last_log_at : null,
+      lastDreamAt: typeof parsed.last_dream_at === "string" ? parsed.last_dream_at : null,
+      lastDreamedLogAt:
         typeof parsed.last_dreamed_log_at === "string" ? parsed.last_dreamed_log_at : null,
-      pending_compactions: Array.isArray(parsed.pending_compactions)
+      pendingCompactions: Array.isArray(parsed.pending_compactions)
         ? parsed.pending_compactions
             .map((entry) => normalizePendingCompaction(entry))
             .filter((entry): entry is PendingCompaction => entry !== null)
@@ -847,8 +832,50 @@ async function readStateUnsafe(cwd: string): Promise<MemoryState> {
 
 async function writeStateUnsafe(cwd: string, state: MemoryState): Promise<void> {
   const paths = getMemoryPaths(cwd);
+  const stateFile: MemoryStateFile = {
+    last_log_at: state.lastLogAt,
+    last_dream_at: state.lastDreamAt,
+    last_dreamed_log_at: state.lastDreamedLogAt,
+    pending_compactions: state.pendingCompactions,
+  };
   await ensureDir(path.dirname(paths.stateFile));
-  await fs.writeFile(paths.stateFile, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+  await fs.writeFile(paths.stateFile, `${JSON.stringify(stateFile, null, 2)}\n`, "utf8");
+}
+
+async function writeCompactionSummary(cwd: string, compaction: PendingCompaction): Promise<void> {
+  const paths = getMemoryPaths(cwd);
+  await withFileMutationQueue(paths.compactionsDir, async () => {
+    ensureMemoryInitialized(await pathExists(paths.memoryRoot));
+
+    const filePath = path.join(
+      paths.compactionsDir,
+      `${formatTimestampForFilename(compaction.timestamp)}-compaction.md`,
+    );
+    await ensureDir(paths.compactionsDir);
+    await fs.writeFile(filePath, buildCompactionSummaryContent(compaction), "utf8");
+  });
+}
+
+async function writeDreamSummary(
+  cwd: string,
+  summary: {
+    timestamp: string;
+    reason?: string;
+    summary: string;
+    updatedBlocks: MemoryBlockName[];
+    undreamedEntries: LogEntry[];
+    pendingCompactions: PendingCompaction[];
+    lastDreamedLogAt: string | null;
+  },
+): Promise<string> {
+  const paths = getMemoryPaths(cwd);
+  const filePath = path.join(
+    paths.compactionsDir,
+    `${formatTimestampForFilename(summary.timestamp)}-dream.md`,
+  );
+  await ensureDir(paths.compactionsDir);
+  await fs.writeFile(filePath, buildDreamSummaryContent(summary), "utf8");
+  return path.relative(cwd, filePath);
 }
 
 async function listResearchFiles(cwd: string): Promise<string[]> {
@@ -914,12 +941,8 @@ function buildDreamUserMessage(replay: DreamReplay, reason?: string): UserMessag
     "</core>",
     "",
     `<undreamed-log count="${replay.undreamedEntries.length}">`,
-    formatLogEntriesForPrompt(replay.undreamedEntries, false) || "(none)",
+    formatLogEntriesForPrompt(replay.undreamedEntries) || "(none)",
     "</undreamed-log>",
-    "",
-    `<retrieved-log count="${replay.retrievedEntries.length}">`,
-    formatLogEntriesForPrompt(replay.retrievedEntries, true) || "(none)",
-    "</retrieved-log>",
     "",
     `<compaction-notes count="${replay.pendingCompactions.length}">`,
     formatPendingCompactionsForPrompt(replay.pendingCompactions) || "(none)",
@@ -944,7 +967,7 @@ async function selectDreamModel(ctx: ExtensionContext): Promise<ModelSelection> 
 
   const auth = await ctx.modelRegistry.getApiKeyAndHeaders(ctx.model);
   if (!auth.ok) {
-    throw new Error(auth.error);
+    throw new Error("error" in auth ? auth.error : "Memory dream is missing model auth.");
   }
 
   return {
@@ -1015,14 +1038,16 @@ function mentionsResolution(text: string): boolean {
 function buildMemoryPrompt(blocks: CoreBlocks, researchFiles: string[]): string {
   const sections = [
     "<repo_memory>",
-    "Use repo memory only for project-local continuity.",
+    "Use repo memory for continuity across sessions in this repo.",
     "Treat .agents/memory/README.md as the source of truth for this repo's memory layout and usage rules.",
     "Do not invent an ad hoc memory workflow when the repo already documents one.",
     "Rules:",
-    `- .agents/memory/core/ is immediate working memory. Enforce the shared ${CORE_LINE_CAP}-line cap only when writing core or finalizing a dream.`,
+    `- .agents/memory/core/ is working memory. Enforce the shared ${CORE_LINE_CAP}-line cap only when writing core or finalizing a dream.`,
     "- .agents/memory/research/ is only for short abstracts of actual external SOTA research relevant to the current problem. Do not store local notes, plans, or project summaries there.",
     "- .agents/memory/raw/ is only for user-requested media files used to collaborate with the user. If you add one, also append a log entry naming the file and why it exists.",
-    "- .agents/memory/log.md is append-only and should capture non-trivial decisions, prompt ingests, plans, experiments, and raw media additions.",
+    "- .agents/memory/log.md is append-only and should capture important decisions, prompt ingests, plans, experiments, raw media additions, and lessons from failed or rejected attempts.",
+    "- If a new entry replaces or corrects prior memory, include explicit supersedes and/or invalidates links in the log entry.",
+    "- Dream consolidates only core, undreamed logs, and pending compaction summaries. It does not automatically retrieve older raw log entries.",
     "- If the user provides a substantial brief, append it as a prompt entry with high importance.",
     researchFiles.length > 0
       ? `- Research abstracts available: ${researchFiles.join(", ")}`
@@ -1049,9 +1074,10 @@ function buildMemoryReadme(): string {
     "## Layout",
     "",
     `- \`core/\` — four short markdown blocks (\`directives.md\`, \`context.md\`, \`focus.md\`, \`pending.md\`). Their combined total must stay at or below ${CORE_LINE_CAP} lines. Enforce that cap only when writing core or finalizing a dream, not when reading.`,
+    "- `compactions/` — immutable dream and compaction summaries with provenance.",
     "- `research/` — short abstracts of actual external SOTA research relevant to the current problem. Do not use this for local notes, plans, implementation details, or project summaries.",
     "- `raw/` — only user-requested media files used to collaborate with the user. This folder is gitignored. If you add something here, also append a log entry naming the file and why it exists.",
-    "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, and raw media additions.",
+    "- `log.md` — append-only markdown log for decisions, prompts, plans, experiments, raw media additions, and lessons from failed or rejected attempts. Use explicit `supersedes` and `invalidates` links when an entry replaces or corrects prior memory.",
     "- `.state.json` — internal Pi state for the last log timestamp, last dream timestamp, last dreamed log timestamp, and pending compaction notes. Do not edit it manually unless recovery is required.",
     "",
     "## Write rules",
@@ -1060,7 +1086,8 @@ function buildMemoryReadme(): string {
     "- If architecture or behavior changes, update `core/context.md`.",
     "- If user preferences or standing constraints change, update `core/directives.md`.",
     "- If focus shifts, update `core/focus.md`.",
-    "- If a non-trivial decision, prompt ingest, plan, experiment, or raw media addition happens, append to `log.md`.",
+    "- If an important decision, prompt ingest, plan, experiment, raw media addition, or lesson from a failed or rejected attempt happens, append to `log.md`.",
+    "- If a new log entry replaces or corrects prior memory, include explicit `supersedes` and/or `invalidates` links.",
     "- If the user provides a substantial brief, append it as a `prompt | high` log entry.",
     "",
     "## Dream",
@@ -1069,7 +1096,7 @@ function buildMemoryReadme(): string {
     "",
     "Pi can trigger dreaming automatically on session start when logs are stale and after compaction when new compaction context should be folded into memory. You can also run `/memory dream` manually.",
     "",
-    "Dream reads all log entries newer than the last dreamed log timestamp and may retrieve older high-signal log entries while consolidating.",
+    "Dream reads all log entries newer than the last dreamed log timestamp plus pending compaction summaries. It does not automatically retrieve older raw log entries.",
     "",
   ].join("\n");
 }
@@ -1108,20 +1135,17 @@ function buildAutoDreamReason(status: AutoDreamStatus, trigger: AutoDreamTrigger
   return "Automatic dream on session start because undreamed memory is stale.";
 }
 
-function formatLogEntriesForPrompt(entries: LogEntry[], truncateBodies: boolean): string {
+function formatLogEntriesForPrompt(entries: LogEntry[]): string {
   if (entries.length === 0) {
     return "";
   }
 
   return entries
     .map((entry) => {
-      const body = truncateBodies
-        ? truncateText(entry.body.trim(), RETRIEVED_LOG_BODY_CHAR_LIMIT)
-        : entry.body.trim();
       return [
         `## ${entry.timestamp} | ${entry.type} | ${entry.importance} | ${entry.title}`,
         "",
-        body || "_No details._",
+        renderLogEntryBody(entry),
       ].join("\n");
     })
     .join("\n\n");
@@ -1233,16 +1257,17 @@ function createEmptyCoreBlocks(): CoreBlocks {
 
 function defaultMemoryState(): MemoryState {
   return {
-    last_log_at: null,
-    last_dream_at: null,
-    last_dreamed_log_at: null,
-    pending_compactions: [],
+    lastLogAt: null,
+    lastDreamAt: null,
+    lastDreamedLogAt: null,
+    pendingCompactions: [],
   };
 }
 
 function getMemoryPaths(cwd: string): {
   memoryRoot: string;
   coreDir: string;
+  compactionsDir: string;
   researchDir: string;
   rawDir: string;
   logFile: string;
@@ -1257,6 +1282,7 @@ function getMemoryPaths(cwd: string): {
   return {
     memoryRoot,
     coreDir,
+    compactionsDir: path.join(memoryRoot, "compactions"),
     researchDir: path.join(memoryRoot, "research"),
     rawDir: path.join(memoryRoot, "raw"),
     logFile: path.join(memoryRoot, "log.md"),
@@ -1312,7 +1338,7 @@ function shouldAutoDream(status: AutoDreamStatus, trigger: AutoDreamTrigger): bo
 function parseMemoryLog(text: string): LogEntry[] {
   const lines = text.replace(/\r/g, "").split("\n");
   const entries: LogEntry[] = [];
-  let current: Omit<LogEntry, "body"> | null = null;
+  let current: Omit<LogEntry, "body" | "supersedes" | "invalidates"> | null = null;
   let bodyLines: string[] = [];
 
   const flush = () => {
@@ -1320,9 +1346,12 @@ function parseMemoryLog(text: string): LogEntry[] {
       return;
     }
 
+    const parsedBody = parseLogEntryBody(bodyLines.join("\n"));
     entries.push({
       ...current,
-      body: normalizeMarkdownBlock(bodyLines.join("\n")),
+      body: parsedBody.body,
+      supersedes: parsedBody.supersedes,
+      invalidates: parsedBody.invalidates,
     });
     current = null;
     bodyLines = [];
@@ -1362,84 +1391,149 @@ function selectUndreamedLogEntries(
   return entries.filter((entry) => entry.timestamp > lastDreamedLogAt);
 }
 
-function selectRetrievedLogEntries(
-  entries: LogEntry[],
-  undreamedEntries: LogEntry[],
-  blocks: CoreBlocks,
-  reason: string | undefined,
-  pendingCompactions: PendingCompaction[],
-): LogEntry[] {
-  const undreamedKeys = new Set(
-    undreamedEntries.map((entry) => `${entry.timestamp}|${entry.title}`),
-  );
-  const retrievalTerms = extractRetrievalTerms([
-    blocks.directives,
-    blocks.context,
-    blocks.focus,
-    blocks.pending,
-    reason ?? "",
-    ...undreamedEntries.map((entry) => `${entry.title}\n${entry.body}`),
-    ...pendingCompactions.map((entry) => entry.summary),
-  ]);
-
-  return entries
-    .filter((entry) => !undreamedKeys.has(`${entry.timestamp}|${entry.title}`))
-    .map((entry) => ({ entry, score: scoreRetrievedEntry(entry, retrievalTerms) }))
-    .filter(({ score }) => score > 0)
-    .sort((a, b) => b.score - a.score || b.entry.timestamp.localeCompare(a.entry.timestamp))
-    .slice(0, MAX_RETRIEVED_LOGS)
-    .map(({ entry }) => entry)
-    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
-}
-
-function extractRetrievalTerms(texts: string[]): string[] {
-  const counts = new Map<string, number>();
-
-  for (const text of texts) {
-    for (const token of text.toLowerCase().match(/[a-z0-9][a-z0-9._/-]{3,}/g) ?? []) {
-      if (STOP_WORDS.has(token) || /^\d+$/.test(token)) {
-        continue;
-      }
-      counts.set(token, (counts.get(token) ?? 0) + 1);
-    }
-  }
-
-  return [...counts.entries()]
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .slice(0, MAX_RETRIEVAL_TERMS)
-    .map(([token]) => token);
-}
-
-function scoreRetrievedEntry(entry: LogEntry, retrievalTerms: string[]): number {
-  const haystack = `${entry.title}\n${entry.body}`.toLowerCase();
-  let score = importanceWeight(entry.importance);
-
-  for (const term of retrievalTerms) {
-    if (haystack.includes(term)) {
-      score += 2;
-    }
-  }
-
-  if (entry.importance === "high") {
-    score += 2;
-  }
-
-  return score;
-}
-
-function importanceWeight(importance: ImportanceLevel): number {
-  switch (importance) {
-    case "high":
-      return 3;
-    case "medium":
-      return 1;
-    case "low":
-      return 0;
-  }
-}
-
 function countUndreamedLogs(entries: LogEntry[], lastDreamedLogAt: string | null): number {
   return selectUndreamedLogEntries(entries, lastDreamedLogAt).length;
+}
+
+function parseLogEntryBody(body: string): {
+  body: string;
+  supersedes: string[];
+  invalidates: string[];
+} {
+  const normalized = body.replace(/\r/g, "").trimEnd();
+  if (!normalized) {
+    return {
+      body: "",
+      supersedes: [],
+      invalidates: [],
+    };
+  }
+
+  const lines = normalized.split("\n");
+  const headingIndex = lines.lastIndexOf("## Memory links");
+  if (headingIndex === -1) {
+    return {
+      body: normalizeMarkdownBlock(normalized),
+      supersedes: [],
+      invalidates: [],
+    };
+  }
+
+  const linkLines = lines.slice(headingIndex + 1).filter((line) => line.trim().length > 0);
+  const supersedes: string[] = [];
+  const invalidates: string[] = [];
+
+  for (const line of linkLines) {
+    const supersedesMatch = line.match(/^-\s+Supersedes:\s+(.+)$/);
+    if (supersedesMatch) {
+      supersedes.push(normalizeInlineText(supersedesMatch[1]));
+      continue;
+    }
+
+    const invalidatesMatch = line.match(/^-\s+Invalidates:\s+(.+)$/);
+    if (invalidatesMatch) {
+      invalidates.push(normalizeInlineText(invalidatesMatch[1]));
+      continue;
+    }
+
+    return {
+      body: normalizeMarkdownBlock(normalized),
+      supersedes: [],
+      invalidates: [],
+    };
+  }
+
+  return {
+    body: normalizeMarkdownBlock(lines.slice(0, headingIndex).join("\n")),
+    supersedes: normalizeMemoryReferences(supersedes),
+    invalidates: normalizeMemoryReferences(invalidates),
+  };
+}
+
+function renderLogEntryBody(entry: LogEntry): string {
+  const body = entry.body.trim() || "_No details._";
+  const linkLines = [
+    ...entry.supersedes.map((reference) => `- Supersedes: ${reference}`),
+    ...entry.invalidates.map((reference) => `- Invalidates: ${reference}`),
+  ];
+
+  if (linkLines.length === 0) {
+    return body;
+  }
+
+  return [body, "", "## Memory links", "", ...linkLines].join("\n");
+}
+
+function normalizeMemoryReferences(input: string[] | undefined): string[] {
+  const seen = new Set<string>();
+  const references: string[] = [];
+
+  for (const value of input ?? []) {
+    const normalized = normalizeInlineText(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    references.push(normalized);
+  }
+
+  return references;
+}
+
+function formatTimestampForFilename(timestamp: string): string {
+  return timestamp.replace(/[:.]/g, "-");
+}
+
+function buildCompactionSummaryContent(compaction: PendingCompaction): string {
+  return [
+    "# Compaction summary",
+    "",
+    `- Timestamp: ${compaction.timestamp}`,
+    "- Source: session_compact",
+    "",
+    "## Summary",
+    "",
+    compaction.summary.trim() || "_No summary._",
+    "",
+  ].join("\n");
+}
+
+function buildDreamSummaryContent(summary: {
+  timestamp: string;
+  reason?: string;
+  summary: string;
+  updatedBlocks: MemoryBlockName[];
+  undreamedEntries: LogEntry[];
+  pendingCompactions: PendingCompaction[];
+  lastDreamedLogAt: string | null;
+}): string {
+  const logRange =
+    summary.undreamedEntries.length > 0
+      ? `${summary.undreamedEntries[0]?.timestamp} → ${summary.undreamedEntries.at(-1)?.timestamp}`
+      : "none";
+
+  return [
+    "# Dream summary",
+    "",
+    `- Timestamp: ${summary.timestamp}`,
+    `- Reason: ${normalizeInlineText(summary.reason ?? "") || "automatic or manual consolidation"}`,
+    `- Updated blocks: ${summary.updatedBlocks.join(", ") || "none"}`,
+    `- Undreamed log count: ${summary.undreamedEntries.length}`,
+    `- Undreamed log range: ${logRange}`,
+    `- Pending compaction count: ${summary.pendingCompactions.length}`,
+    `- Last dreamed log timestamp: ${summary.lastDreamedLogAt ?? "none"}`,
+    "",
+    "## Pending compaction timestamps",
+    "",
+    summary.pendingCompactions.length > 0
+      ? summary.pendingCompactions.map((entry) => `- ${entry.timestamp}`).join("\n")
+      : "- none",
+    "",
+    "## Summary",
+    "",
+    summary.summary.trim() || "_No summary._",
+    "",
+  ].join("\n");
 }
 
 function normalizePendingCompaction(input: unknown): PendingCompaction | null {
