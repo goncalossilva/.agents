@@ -80,6 +80,11 @@
       "~/.aws",
       "~/.ssh"
     ],
+    "allowRead": [
+      "~/.ssh/config",
+      "~/.ssh/known_hosts",
+      "~/.ssh/*.pub"
+    ],
     "denyWrite": [
       ".env",
       ".env.*",
