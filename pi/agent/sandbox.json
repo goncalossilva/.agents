@@ -110,6 +110,8 @@
       "~/.cargo/.package-cache-mutate",
       "~/.cargo/.global-cache",
       "~/go/pkg",
+      "~/Library/Application Support/go/telemetry",
+      "~/.config/go/telemetry",
       "~/.m2/repository",
       "~/.m2/wrapper/dists",
       "~/.gradle/.tmp",
