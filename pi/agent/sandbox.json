@@ -71,7 +71,7 @@
     "allowUnixSockets": [
       "/tmp",
       "/private/tmp",
-      "~/.gnupg",
+      "$SSH_AUTH_SOCK",
       "~/.orbstack/run/docker.sock"
     ]
   },
