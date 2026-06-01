@@ -130,5 +130,10 @@
       "~/.pi/agent/*.lock"
     ]
   },
+  "ignoreViolations": {
+    "*": [
+      "/__pycache__"
+    ]
+  },
   "enableWeakerNetworkIsolation": true
 }
