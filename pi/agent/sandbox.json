@@ -71,7 +71,6 @@
     "allowUnixSockets": [
       "/tmp",
       "/private/tmp",
-      "$SSH_AUTH_SOCK",
       "~/.orbstack/run/docker.sock"
     ]
   },
@@ -83,7 +82,8 @@
     "allowRead": [
       "~/.ssh/config",
       "~/.ssh/known_hosts",
-      "~/.ssh/*.pub"
+      "~/.ssh/*.pub",
+      "~/.ssh/id_ed25519_signing"
     ],
     "denyWrite": [
       ".env",
