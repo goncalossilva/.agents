@@ -69,6 +69,7 @@
     "deniedDomains": [],
     "allowLocalBinding": true,
     "allowUnixSockets": [
+      "$SSH_AUTH_SOCK",
       "/tmp",
       "/private/tmp",
       "~/.orbstack/run/docker.sock"
