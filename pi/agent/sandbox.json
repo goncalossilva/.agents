@@ -66,6 +66,9 @@
       "*.twist.com",
       "doist.com",
       "*.doist.com"
+      "*.doist.com",
+      "s46.dev",
+      "*.s46.dev"
     ],
     "deniedDomains": [],
     "allowLocalBinding": true,
