@@ -11,7 +11,7 @@
 
 - Writing code: Write idiomatic, simple, maintainable code consistent with surrounding code. Optimize for the simplest, most intuitive solution.
 - Before writing new code: Search the codebase for existing utilities, helpers, and patterns. Reuse and extend what exists rather than inventing new abstractions unless they’re clearly reused.
-- Structuring code: Prefer the best design consistent with surrounding code, even if it means editing more code. If designs are equivalent, prefer fewer moving parts (smaller API surface, fewer changes).
+- Structuring code: Prefer the simplest design consistent with surrounding code. Favor fewer moving parts. Flag larger design opportunities separately.
 - Organizing code: Follow the step-down rule. Keep high-level behavior at the top and details below. In classes: constructor, then public API methods, then private helpers. Prefer top-down call flow when practical.
 - Editing code: No breadcrumbs. If you delete, move, or rename code, do not leave a comment in the old place.
 - Fixing code: Reason from first principles, find the root cause of an issue, and fix it. Don't apply band-aids on top.
