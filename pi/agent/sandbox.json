@@ -72,6 +72,11 @@
     ],
     "deniedDomains": [],
     "allowLocalBinding": true,
+    "allowMachLookup": [
+      "com.apple.dnssd.service",
+      "com.apple.SystemConfiguration.configd",
+      "com.apple.SystemConfiguration.DNSConfiguration"
+    ],
     "allowUnixSockets": [
       "$SSH_AUTH_SOCK",
       "/tmp",
