@@ -145,7 +145,8 @@
   },
   "ignoreViolations": {
     "*": [
-      "/__pycache__"
+      "/__pycache__",
+      "mach-lookup com.apple.usymptomsd"
     ]
   },
   "enableWeakerNetworkIsolation": true
