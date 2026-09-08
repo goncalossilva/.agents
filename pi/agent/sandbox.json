@@ -75,7 +75,8 @@
     "allowMachLookup": [
       "com.apple.dnssd.service",
       "com.apple.SystemConfiguration.configd",
-      "com.apple.SystemConfiguration.DNSConfiguration"
+      "com.apple.SystemConfiguration.DNSConfiguration",
+      "com.apple.FSEvents"
     ],
     "allowUnixSockets": [
       "$SSH_AUTH_SOCK",
@@ -132,12 +133,16 @@
       "~/.m2/repository",
       "~/.m2/wrapper/dists",
       "~/.gradle",
+      "~/.konan",
       "~/Library/Application Support/kotlin",
+      "~/Library/Preferences/com.apple.java.util.prefs.plist*",
+      "~/**/kotlin-native/klib/cache/**/*",
       "~/.android",
       "~/.bundle/cache",
       "~/.gem/cache",
       "~/.gem/specs",
       "~/.nuget/packages",
+      "~/.local/share/NuGet",
       "~/.local/share/NuGet/*-cache",
       "~/.local/share/NuGet/*-cache/**",
       "~/.pi/agent/*.lock"
