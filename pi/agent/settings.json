@@ -1,8 +1,8 @@
 {
-  "lastChangelogVersion": "0.80.6",
+  "lastChangelogVersion": "0.85.1",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-5.6-sol",
-  "defaultThinkingLevel": "xhigh",
+  "defaultModel": "gpt-6-astra",
+  "defaultThinkingLevel": "high",
   "autocompleteMaxVisible": 10,
   "editorPaddingX": 1,
   "steeringMode": "one-at-a-time",
@@ -13,8 +13,8 @@
   "hideThinkingBlock": false,
   "doubleEscapeAction": "tree",
   "enabledModels": [
-    "openai-codex/gpt-5.6-sol",
-    "openai-codex/gpt-5.3-codex-spark"
+    "openai-codex/gpt-5.3-codex-spark",
+    "openai-codex/gpt-6-astra"
   ],
   "transport": "auto",
   "theme": "tau-dark",
