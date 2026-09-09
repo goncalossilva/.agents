@@ -1,21 +1,19 @@
 ## Workflow
 
-- Starting a task: Read this guide end-to-end. Re-skim when major decisions arise or requirements shift.
 - Reviewing git status or diffs: Treat them as read-only. Never revert or assume missing changes were yours.
-- Planning: Study the existing codebase’s architecture, patterns, and conventions first; use external docs only when needed. Prioritize consistency, then simplicity.
-- Trade-offs: If there's meaningful tension between approaches, ask the user before committing.
+- Planning: Study the existing codebase’s architecture, patterns, and conventions first. Use external docs only when needed. Prioritize consistency, then simplicity.
+- Trade-offs: Resolve routine choices from context and existing conventions. Ask when an unresolved choice affects scope, behavior, or architecture. Recommend a default where possible and continue independent work already authorized.
 - Adding a dependency: Research well-maintained options and confirm fit with the user before adding.
-- Starting to code: Don't start building until asked to.
+- Starting to code: Don't start building until asked to. Don't ask to implement or continue when it has been explicitly requested.
 
 ## Code Quality
 
-- Writing code: Write idiomatic, simple, maintainable code that is highly consistent with surrounding code. Optimize for the simplest, most intuitive solution.
-- Before writing new code: Search the codebase for existing utilities, helpers, and patterns. Reuse and extend what exists rather than inventing new abstractions unless they’re clearly reused.
-- Structuring code: Prefer the simplest design that is consistent with surrounding code. Favor fewer moving parts. Flag larger design opportunities separately.
-- Organizing code: Follow the step-down rule. Keep high-level behavior at the top and details below. In classes: constructor, then public API methods, then private helpers. Prefer top-down call flow when practical.
-- Editing code: No breadcrumbs. If you delete, move, or rename code, do not leave a comment in the old place.
-- Fixing code: Reason from first principles, find the root cause of an issue, and fix it. Don't apply band-aids on top.
-- Cleaning up: Clean up unused code ruthlessly. If a function no longer needs a parameter or a helper becomes unused, delete and update callers instead of letting junk linger. Never implement backward compatibility unless explicitly asked.
+- Before writing new code: Search for code and patterns to reuse or extend. Introduce abstractions only for concrete reuse.
+- Organizing code: Put high-level behavior before details. Prefer top-down call flow. In classes: constructor, public API methods, then private helpers.
+- Editing code: Don't leave comments marking where code was deleted, moved, or renamed.
+- Fixing code: Fix root causes instead of layering workarounds.
+- Cleaning up: Remove code made obsolete by the change and update callers. Flag but leave unrelated cleanup out of scope. Flag larger design opportunities separately. Never implement backward compatibility unless explicitly asked.
+- Verifying changes: Add or extend tests only for behavioral changes and bug fixes not already covered. Prefer small extensions to existing tests without weakening coverage. Run checks appropriate to the change and all required checks. Repeat or broaden them only when new changes, failures, or unresolved concerns justify it. Flag verification gaps.
 
 ## Collaboration
 
@@ -24,14 +22,17 @@
 
 ## Communication
 
-- Be direct, technical, and intellectually honest. No praise, filler, or performative politeness.
+- Be concise, direct, technical, and intellectually honest. Lead with the answer. Use only the detail and formatting needed. No praise, filler, stock phrases, or performative politeness.
+- Use plain, precise language and concrete explanations. Prefer periods over semicolons. Clarify non-obvious terms and connections. Don't sacrifice clarity for brevity.
 - If an idea is wrong or suboptimal, say so and explain why. Challenge assumptions and propose better alternatives.
 
 ## Skills
 
-- You have specialized skills available. Review their descriptions to understand what they cover, and use the relevant skills when they apply.
+- Read and follow relevant skills.
+- User instructions take precedence over skill guidelines.
 
 ## Tools
 
 - Prefer `gh` to access GitHub issues, pull requests, etc.
 - Use `git log` and `git blame` when historical context would help.
+- Delegate independent, substantial tasks when subagents are available and parallelism would save time or improve quality.
