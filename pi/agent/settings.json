@@ -2,7 +2,7 @@
   "lastChangelogVersion": "0.85.1",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6-astra",
-  "defaultThinkingLevel": "high",
+  "defaultThinkingLevel": "xhigh",
   "autocompleteMaxVisible": 10,
   "editorPaddingX": 1,
   "steeringMode": "one-at-a-time",
