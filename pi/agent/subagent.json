@@ -1,0 +1,22 @@
+[
+  {
+    "id": "low",
+    "model": "openai-codex/gpt-6-luna",
+    "thinking": "xhigh"
+  },
+  {
+    "id": "medium",
+    "model": "openai-codex/gpt-6.1-sol",
+    "thinking": "xhigh"
+  },
+  {
+    "id": "high",
+    "model": "openai-codex/gpt-6.1-sol",
+    "thinking": "xhigh"
+  },
+  {
+    "id": "xhigh",
+    "model": "openai-codex/gpt-6-astra",
+    "thinking": "xhigh"
+  }
+]

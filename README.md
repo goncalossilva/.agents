@@ -9,9 +9,8 @@ Reusable extensions and skills live in `~/Code/Other/tau` and are loaded through
 ```text
 AGENTS.md                         Global Pi instructions
 pi/agent/settings.json            Personal Pi settings; loads Tau
-pi/agent/openai-fast.json         OpenAI fast-mode preferences
-pi/agent/openai-verbosity.json    OpenAI verbosity preferences
 pi/agent/sandbox.json             Personal sandbox policy
+pi/agent/subagent.json            Subagent model and thinking recommendations
 ```
 
 ## Install
