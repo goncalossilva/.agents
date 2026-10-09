@@ -13,8 +13,8 @@
   "hideThinkingBlock": false,
   "doubleEscapeAction": "tree",
   "enabledModels": [
-    "openai-codex/gpt-5.3-codex-spark",
-    "openai-codex/gpt-6-astra"
+    "openai-codex/gpt-6-astra",
+    "openai-codex/gpt-6.1-sol"
   ],
   "transport": "auto",
   "theme": "tau-dark",
