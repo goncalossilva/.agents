@@ -1,4 +1,5 @@
 {
+  "classifier": "openai-codex/guardian",
   "network": {
     "allowedDomains": [
       "localhost",
