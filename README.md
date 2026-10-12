@@ -10,6 +10,7 @@ Reusable extensions and skills live in `~/Code/Other/tau` and are loaded through
 AGENTS.md                         Global Pi instructions
 pi/agent/settings.json            Personal Pi settings; loads Tau
 pi/agent/sandbox.json             Personal sandbox policy
+pi/agent/review.json              Review model and focus defaults
 pi/agent/subagent.json            Subagent model and thinking recommendations
 ```
 

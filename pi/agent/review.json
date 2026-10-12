@@ -1,0 +1,7 @@
+{
+  "models": [
+    "openai-codex/gpt-6.1-sol:medium",
+    "anthropic/claude-sonnet-5-5:medium",
+    "openrouter/z-ai/glm-5.3:medium"
+  ]
+}
