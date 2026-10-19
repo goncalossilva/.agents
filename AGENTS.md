@@ -12,8 +12,9 @@
 - Organizing code: Put high-level behavior before details. Prefer top-down call flow. In classes: constructor, public API methods, then private helpers.
 - Editing code: Don't leave comments marking where code was deleted, moved, or renamed.
 - Fixing code: Fix root causes instead of layering workarounds.
-- Cleaning up: Remove code made obsolete by the change and update callers. Flag but leave unrelated cleanup out of scope. Flag larger design opportunities separately. Never implement backward compatibility unless explicitly asked.
-- Verifying changes: Add or extend tests only for behavioral changes and bug fixes not already covered. Prefer small extensions to existing tests without weakening coverage. Run checks appropriate to the change and all required checks. Repeat or broaden them only when new changes, failures, or unresolved concerns justify it. Flag verification gaps.
+- Verifying code: Exercise the affected behavior through normal usage when practical. Run checks appropriate to the change alongside all required checks. Flag verification gaps separately.
+- Testing code: Add or extend tests for changed behavior and concrete regression risks not already covered. Prefer extending existing tests when that keeps them clear. Avoid tests that mirror the implementation. Keep test cleanup and simplification within the scope of a change. Flag testing gaps separately.
+- Cleaning up: Remove code made obsolete by the change. Don't add speculative compatibility layers. Flag unrelated cleanup and larger redesign opportunities separately.
 
 ## Collaboration
 
