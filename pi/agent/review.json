@@ -2,6 +2,8 @@
   "models": [
     "openai-codex/gpt-6.1-sol:medium",
     "anthropic/claude-sonnet-5-5:medium",
-    "openrouter/z-ai/glm-5.3:medium"
+    "xai/grok-4.7:medium",
+    "openrouter/deepseek/deepseek-v4.1-flash-1017:max",
+    "openrouter/z-ai/glm-5.3:high"
   ]
 }
