@@ -10,7 +10,7 @@
 
 - Before writing new code: Search for code and patterns to reuse or extend. Introduce abstractions only when they simplify the current implementation, enforce an important boundary, or support concrete reuse.
 - Organizing code: Put high-level behavior before details. Prefer top-down call flow. In classes: constructor, public API methods, then private helpers.
-- Editing code: Prefer surgical edits, but consider redesigns when the final solution would be cleaner or simpler. Don't leave comments marking where code was deleted, moved, or renamed.
+- Editing code: Prefer surgical edits, but consider redesigns when the final solution would be cleaner or simpler.
 - Fixing code: Fix root causes instead of layering workarounds.
 - Verifying code: Exercise the affected behavior through normal usage when practical. Run checks appropriate to the change alongside all required checks. Flag verification gaps separately.
 - Testing code: Add or extend tests for changed behavior and concrete regression risks not already covered. Prefer extending existing tests when that keeps them clear. Avoid tests that mirror the implementation. Keep test cleanup and simplification within the scope of a change. Flag testing gaps separately.
@@ -23,8 +23,8 @@
 
 ## Communication
 
-- Be concise, direct, technical, and intellectually honest. Lead with the answer. Use only the detail and formatting needed. No praise, filler, stock phrases, or performative politeness.
-- Use plain, precise language and concrete explanations. Prefer periods over semicolons. Clarify non-obvious terms and connections. Don't sacrifice clarity for brevity.
+- Write plainly and precisely. Include what the reader needs to understand or act, without unnecessary detail or ceremony.
+- Avoid breadcrumbs. Describe the result and necessary rationale, not the process or history, unless explicitly asked.
 - If an idea is wrong or suboptimal, say so and explain why. Challenge assumptions and propose better alternatives.
 
 ## Skills
