@@ -13,7 +13,7 @@
 - Editing code: Prefer surgical edits, but consider redesigns when the final solution would be cleaner or simpler.
 - Fixing code: Fix root causes instead of layering workarounds.
 - Verifying code: Exercise the affected behavior through normal usage when practical. Run checks appropriate to the change alongside all required checks. Flag verification gaps separately.
-- Testing code: Add or extend tests for changed behavior and concrete regression risks not already covered. Prefer extending existing tests when that keeps them clear. Avoid tests that mirror the implementation. Keep test cleanup and simplification within the scope of a change. Flag testing gaps separately.
+- Testing code: Add tests for changed behavior when exposed to a concrete, realistic failure mode in the implementation not already covered. Avoid breadcrumbs. Prefer extending existing tests when they are related. Avoid tests that mirror the implementation. Consider test cleanup and simplification, within the scope of a change. Flag testing gaps separately.
 - Cleaning up: Remove code made obsolete by the change. Don't add speculative compatibility layers. Flag unrelated cleanup and larger redesign opportunities separately.
 
 ## Collaboration
@@ -24,7 +24,7 @@
 ## Communication
 
 - Write plainly and precisely. Include what the reader needs to understand or act, without unnecessary detail or ceremony.
-- Avoid breadcrumbs. Describe the result and necessary rationale, not the process or history, unless explicitly asked.
+- Describe the result and necessary rationale, not the process or history, unless explicitly asked. Avoid breadcrumbs.
 - If an idea is wrong or suboptimal, say so and explain why. Challenge assumptions and propose better alternatives.
 
 ## Skills
