@@ -1,7 +1,7 @@
 {
   "lastChangelogVersion": "1.5.2",
   "defaultProvider": "openai-codex",
-  "defaultModel": "gpt-6-astra",
+  "defaultModel": "gpt-6.2-astra",
   "defaultThinkingLevel": "xhigh",
   "autocompleteMaxVisible": 10,
   "editorPaddingX": 1,
@@ -13,8 +13,8 @@
   "hideThinkingBlock": false,
   "doubleEscapeAction": "tree",
   "enabledModels": [
-    "openai-codex/gpt-6-astra",
-    "openai-codex/gpt-6.1-sol"
+    "openai-codex/gpt-6.2-astra",
+    "openai-codex/gpt-6.2-sol"
   ],
   "transport": "auto",
   "theme": "tau-dark",
