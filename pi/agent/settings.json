@@ -1,5 +1,5 @@
 {
-  "lastChangelogVersion": "1.5.2",
+  "lastChangelogVersion": "1.6.1",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-6.2-astra",
   "defaultThinkingLevel": "xhigh",
